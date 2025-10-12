@@ -334,8 +334,10 @@ NAME_REWRITES: Dict[str, str] = {
 EXTRA_NAME_ALIASES: Dict[str, str] = {
     "usa": "US",
     "united states of america": "US",
+    "united states": "US",
     "america": "US",
     "uk": "GB",
+    "united kingdom": "GB",
     "great britain": "GB",
     "britain": "GB",
     "south korea": "KR",
