@@ -6,6 +6,8 @@
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 部署静态前端到独立域名时，可在此 meta 中填入后端 API 根路径 -->
+    <meta name="backend-base-url" content="" />
     <style>
       :root {
         color-scheme: dark;
@@ -217,7 +219,9 @@
     <script src="https://fastly.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script>
       const BACKEND_BASE_URL =
-        window.BACKEND_BASE_URL || (window.location.origin.includes(":") ? "http://localhost:8000" : window.location.origin);
+        window.BACKEND_BASE_URL ||
+        (document.querySelector('meta[name="backend-base-url"]')?.getAttribute("content") || "").trim() ||
+        (window.location.origin.includes(":") ? "http://localhost:8000" : window.location.origin);
 
       const DEFAULT_MAP_SOURCES = [
         "./world.geo.json",
