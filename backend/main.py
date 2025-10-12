@@ -297,7 +297,7 @@ COMMON_COUNTRY_ALIASES: Dict[str, Optional[str]] = {
 "UU":"Undesignated Sovereignty",
 "AE":"United Arab Emirates",
 "UK":"United Kingdom",
-"US":"United States",
+"US":"United States of America",
 "UY":"Uruguay",
 "UZ":"Uzbekistan",
 "NH":"Vanuatu",
@@ -332,7 +332,7 @@ NAME_REWRITES: Dict[str, str] = {
 
 EXTRA_NAME_ALIASES: Dict[str, str] = {
     "usa": "US",
-    "united states of america": "US",
+    "United States of America": "US",
     "america": "US",
     "uk": "GB",
     "great britain": "GB",
