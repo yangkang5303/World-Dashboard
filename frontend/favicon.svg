@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <style>
+      .bg { fill:#0B5FFF; }
+      .fg { fill:none; stroke:#fff; stroke-width:24; stroke-linecap:round; }
+      .txt { fill:#fff; font:bold 220px "DejaVu Sans","Arial",sans-serif; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1024" height="1024" rx="180" ry="180"/>
+  <g transform="translate(512 472)">
+    <circle class="fg" cx="0" cy="0" r="328"/>
+    <ellipse class="fg" cx="0" cy="0" rx="180" ry="328"/>
+    <ellipse class="fg" cx="0" cy="0" rx="328" ry="180"/>
+    <ellipse class="fg" cx="0" cy="0" rx="328" ry="180" transform="rotate(180)"/>
+  </g>
+  <g>
+    <circle cx="626" cy="423" r="36" fill="#E63232"/>
+    <circle cx="616" cy="415" r="10" fill="#ffffff" opacity="0.7"/>
+  </g>
+  <text x="50%" y="73%" text-anchor="middle" class="txt">WD</text>
+</svg>

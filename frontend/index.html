@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>World Dashboard - GDELT 驱动新闻地图</title>
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+        --bg: #0b101b;
+        --panel-bg: rgba(18, 24, 38, 0.85);
+        --accent: #4cc9f0;
+        --accent-strong: #f72585;
+        --text: #e0ecff;
+        --text-soft: #93a3c4;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        background: radial-gradient(circle at top, #10192b, #05070c);
+        color: var(--text);
+      }
+
+      header {
+        padding: 16px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 1.6rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+      }
+
+      header p {
+        margin: 0;
+        color: var(--text-soft);
+        font-size: 0.9rem;
+      }
+
+      #toggle-map {
+        display: none;
+        margin-top: 8px;
+        padding: 6px 14px;
+        font-size: 0.85rem;
+        color: var(--accent);
+        background: rgba(76, 201, 240, 0.12);
+        border: 1px solid rgba(76, 201, 240, 0.4);
+        border-radius: 999px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      #toggle-map:hover {
+        background: rgba(76, 201, 240, 0.25);
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: 3fr 2fr;
+        gap: 16px;
+        height: calc(100vh - 96px);
+        padding: 0 24px 24px 24px;
+      }
+
+      #map {
+        background: var(--panel-bg);
+        border-radius: 16px;
+        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35);
+      }
+
+      #news-panel {
+        background: var(--panel-bg);
+        border-radius: 16px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      #news-panel header {
+        padding: 20px 24px 12px 24px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      #news-panel h2 {
+        margin: 0;
+        font-size: 1.2rem;
+        letter-spacing: 0.05em;
+      }
+
+      #news-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        flex: 1;
+      }
+
+      #news-list li {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        padding: 16px 24px;
+      }
+
+      #news-list li:last-child {
+        border-bottom: none;
+      }
+
+      .headline {
+        font-size: 1rem;
+        color: var(--text);
+        margin: 0 0 4px 0;
+      }
+
+      .meta {
+        font-size: 0.8rem;
+        color: var(--text-soft);
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .meta span {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+
+      .pill {
+        background: rgba(76, 201, 240, 0.12);
+        color: var(--accent);
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        letter-spacing: 0.04em;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      a:hover {
+        color: var(--accent-strong);
+      }
+
+      @media (max-width: 1024px) {
+        main {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto 1fr;
+          height: auto;
+        }
+
+        #news-panel {
+          height: 50vh;
+        }
+      }
+
+      @media (max-width: 768px) {
+        header {
+          gap: 8px;
+        }
+
+        #toggle-map {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        main {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto;
+          height: auto;
+        }
+
+        #map {
+          height: 45vh;
+          margin-bottom: 12px;
+        }
+
+        #map.collapsed {
+          display: none;
+        }
+
+        #news-panel {
+          height: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>World Dashboard · GDELT 实时新闻地图</h1>
+      <p>点击国家查看该地区最近 24 小时内的 50 条焦点新闻。</p>
+      <button id="toggle-map" class="hidden" aria-expanded="false">显示地图</button>
+    </header>
+    <main>
+      <div id="map"></div>
+      <aside id="news-panel">
+        <header>
+          <h2 id="panel-title">全球热点 · Past 24 Hours</h2>
+        </header>
+        <ul id="news-list"></ul>
+      </aside>
+    </main>
+
+    <script src="https://fastly.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script>
+      const BACKEND_BASE_URL =
+        window.BACKEND_BASE_URL || (window.location.origin.includes(":") ? "http://localhost:8000" : window.location.origin);
+
+      const DEFAULT_MAP_SOURCES = [
+        "./world.geo.json",
+        "https://fastly.jsdelivr.net/npm/echarts@5/examples/data/asset/world.geo.json",
+        "https://cdn.jsdelivr.net/npm/echarts@5/examples/data/asset/world.geo.json",
+        "https://fastly.jsdelivr.net/npm/echarts@5/map/json/world.json",
+        "https://cdn.jsdelivr.net/npm/echarts@5/map/json/world.json",
+        "https://geo.datav.aliyun.com/geojson/world.json"
+      ];
+      const MAP_SOURCES = Array.isArray(window.WORLD_MAP_SOURCES) && window.WORLD_MAP_SOURCES.length
+        ? window.WORLD_MAP_SOURCES
+        : DEFAULT_MAP_SOURCES;
+
+      const mapEl = document.getElementById("map");
+      const chart = echarts.init(mapEl, null, { renderer: "canvas" });
+      const toggleMapBtn = document.getElementById("toggle-map");
+      const newsPanel = document.getElementById("news-panel");
+      let mapVisible = true;
+      let autoCollapsed = false;
+
+      async function loadWorldJSON() {
+        let lastError = null;
+        for (const url of MAP_SOURCES) {
+          try {
+            const response = await fetch(url, { cache: "force-cache" });
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+            const geoJson = await response.json();
+            echarts.registerMap("world", geoJson);
+            console.info("[Map] Loaded world geoJSON from:", url);
+            return;
+          } catch (error) {
+            lastError = error;
+            console.warn("[Map] Failed to load from", url, error);
+          }
+        }
+        throw new Error(`无法加载世界地图数据：${lastError?.message || "unknown error"}`);
+      }
+
+      function formatDate(isoString) {
+        if (!isoString) return "时间未知";
+        // GDELT seendate is like 20240922T120000Z
+        if (/^\d{8}T\d{6}Z$/.test(isoString)) {
+          const year = isoString.slice(0, 4);
+          const month = isoString.slice(4, 6);
+          const day = isoString.slice(6, 8);
+          const hour = isoString.slice(9, 11);
+          const minute = isoString.slice(11, 13);
+          return `${year}-${month}-${day} ${hour}:${minute} UTC`;
+        }
+        const date = new Date(isoString);
+        if (Number.isNaN(date.valueOf())) return isoString;
+        return date.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+      }
+
+      const MAP_NAME_BY_ISO = {
+        US: "United States of America",
+        GB: "United Kingdom",
+        RU: "Russia",
+        CI: "Côte d'Ivoire",
+        CD: "Democratic Republic of the Congo",
+        CG: "Republic of the Congo",
+        IR: "Iran",
+        KP: "Dem. Rep. Korea",
+        KR: "Korea",
+        LA: "Lao PDR",
+        SY: "Syria",
+        PS: "Palestine",
+        CZ: "Czech Rep.",
+        TZ: "Tanzania",
+        VN: "Vietnam",
+        VE: "Venezuela",
+        MF: "Saint Martin",
+        BL: "Saint Barthelemy",
+        TW: "Taiwan",
+        HK: "Hong Kong",
+        MO: "Macao",
+        XK: "Kosovo",
+        SS: "South Sudan",
+      };
+
+      function resolveMapName(iso2, fallbackName) {
+        if (!iso2) return fallbackName || "Unknown";
+        const upper = iso2.toUpperCase();
+        if (MAP_NAME_BY_ISO[upper]) return MAP_NAME_BY_ISO[upper];
+        return fallbackName || upper;
+      }
+
+      function buildCountryDatasets(articles) {
+        const scatterMap = new Map();
+        const areaMap = new Map();
+        let maxHeat = 0;
+
+        articles.forEach((article) => {
+          const countries = Array.isArray(article.countries) ? article.countries : [];
+          countries.forEach((country) => {
+            const iso2 = country.iso2 ? country.iso2.toUpperCase() : undefined;
+            const key = iso2 || (country.name || Math.random().toString()).toUpperCase();
+            const displayName = resolveMapName(iso2, country.name || iso2);
+
+            if (!areaMap.has(key)) {
+              areaMap.set(key, {
+                name: displayName,
+                iso2: iso2 || null,
+                value: 0,
+                headlines: new Set(),
+              });
+            }
+            const areaEntry = areaMap.get(key);
+            areaEntry.value += 1;
+            if (article.title && areaEntry.headlines.size < 3) {
+              areaEntry.headlines.add(article.title);
+            }
+            maxHeat = Math.max(maxHeat, areaEntry.value);
+
+            if (country.lat != null && country.lon != null) {
+              if (!scatterMap.has(key)) {
+                scatterMap.set(key, {
+                  name: displayName,
+                  iso2: iso2 || null,
+                  value: [country.lon, country.lat, 0],
+                  headlines: new Set(),
+                });
+              }
+              const scatterEntry = scatterMap.get(key);
+              scatterEntry.value[2] += 1;
+              if (article.title && scatterEntry.headlines.size < 3) {
+                scatterEntry.headlines.add(article.title);
+              }
+            }
+          });
+        });
+
+        const scatterData = Array.from(scatterMap.values()).map((entry) => ({
+          ...entry,
+          value: [...entry.value],
+          headlines: Array.from(entry.headlines),
+        }));
+
+        const areaData = Array.from(areaMap.values()).map((entry) => ({
+          name: entry.name,
+          iso2: entry.iso2,
+          value: entry.value,
+          headlines: Array.from(entry.headlines),
+        }));
+
+        return {
+          scatterData,
+          areaData,
+          maxHeat,
+        };
+      }
+
+      function renderGlobalOption(articles) {
+        const { scatterData, areaData, maxHeat } = buildCountryDatasets(articles);
+        const visualMax = Math.max(maxHeat || 1, 5);
+
+        chart.setOption({
+          backgroundColor: "transparent",
+          tooltip: {
+            trigger: "item",
+            formatter(params) {
+              const data = params.data || {};
+              const headlines = (data.headlines || [])
+                .map((headline) => `<div style="margin-top:4px;">· ${headline}</div>`)
+                .join("");
+
+              if (params.seriesType === "map") {
+                return `
+                  <div style="min-width:180px;">
+                    <strong>${params.name}</strong><br/>
+                    热点新闻数量：${params.value || 0}${headlines}
+                  </div>`;
+              }
+
+              if (params.seriesType === "effectScatter") {
+                return `
+                  <div style="min-width:180px;">
+                    <strong>${params.name}</strong><br/>
+                    热点新闻数量：${(params.value && params.value[2]) || 0}${headlines}
+                  </div>`;
+              }
+              return params.name;
+            },
+          },
+          visualMap: {
+            min: 0,
+            max: visualMax,
+            calculable: false,
+            orient: "horizontal",
+            left: "center",
+            bottom: 30,
+            inRange: {
+              color: ["#3f37c9", "#4895ef", "#4cc9f0", "#f72585"],
+            },
+            textStyle: {
+              color: "#d9e5ff",
+            },
+            seriesIndex: [0],
+          },
+          geo: {
+            map: "world",
+            roam: true,
+            itemStyle: {
+              areaColor: "#143158",
+              borderColor: "#3984f4",
+              borderWidth: 0.3,
+            },
+            emphasis: {
+              itemStyle: {
+                areaColor: "#1d4e89",
+              },
+            },
+          },
+          series: [
+            {
+              name: "Country Heat",
+              type: "map",
+              geoIndex: 0,
+              data: areaData,
+              itemStyle: {
+                borderColor: "#3984f4",
+                borderWidth: 0.5,
+              },
+              emphasis: {
+                itemStyle: {
+                  areaColor: "#f72585",
+                },
+              },
+            },
+            {
+              name: "Heat",
+              type: "effectScatter",
+              coordinateSystem: "geo",
+              zlevel: 2,
+              rippleEffect: {
+                period: 8,
+                scale: 4,
+                brushType: "stroke",
+              },
+              symbolSize(val) {
+                return Math.min(28, 8 + Math.sqrt(val[2]) * 4);
+              },
+              itemStyle: {
+                color: "#f72585",
+              },
+              data: scatterData,
+            },
+          ],
+        });
+      }
+
+      function renderNewsList(data, isGlobal = true) {
+        const list = document.getElementById("news-list");
+        list.innerHTML = "";
+
+        data.articles.forEach((article) => {
+          const li = document.createElement("li");
+          li.innerHTML = `
+            <h3 class="headline"><a href="${article.url}" target="_blank" rel="noopener">${article.title}</a></h3>
+            <div class="meta">
+              <span>🕒 ${formatDate(article.time)}</span>
+              <span>🌐 ${article.source || "未知来源"}</span>
+              ${
+                article.countries?.length
+                  ? `<span class="pill">${article.countries
+                      .map((c) => c.iso2 || c.name)
+                      .filter(Boolean)
+                      .join(" · ")}</span>`
+                  : ""
+              }
+            </div>
+            ${article.summary ? `<p style="margin-top:8px;color:var(--text-soft);font-size:0.85rem;">${article.summary}</p>` : ""}
+          `;
+          list.appendChild(li);
+        });
+
+        document.getElementById("panel-title").textContent = isGlobal
+          ? "全球热点 · Past 24 Hours"
+          : `${data.query.toUpperCase()} · 最近 24 小时`;
+      }
+
+      async function fetchJSON(url) {
+        const res = await fetch(url);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || res.statusText);
+        }
+        return res.json();
+      }
+
+      function applyResponsiveLayout() {
+        const mobile = window.innerWidth <= 768;
+
+        if (!toggleMapBtn) {
+          requestAnimationFrame(() => chart.resize());
+          return;
+        }
+
+        if (!mobile) {
+          mapVisible = true;
+          autoCollapsed = false;
+          mapEl.classList.remove("collapsed");
+          toggleMapBtn.classList.add("hidden");
+          toggleMapBtn.setAttribute("aria-hidden", "true");
+          toggleMapBtn.setAttribute("aria-expanded", "true");
+          toggleMapBtn.textContent = "隐藏地图";
+        } else {
+          toggleMapBtn.classList.remove("hidden");
+          toggleMapBtn.setAttribute("aria-hidden", "false");
+          if (mapVisible) {
+            mapEl.classList.remove("collapsed");
+            toggleMapBtn.textContent = "隐藏地图";
+            toggleMapBtn.setAttribute("aria-expanded", "true");
+          } else {
+            mapEl.classList.add("collapsed");
+            toggleMapBtn.textContent = "显示地图";
+            toggleMapBtn.setAttribute("aria-expanded", "false");
+          }
+        }
+
+        requestAnimationFrame(() => chart.resize());
+      }
+
+      async function loadGlobalNews() {
+        const data = await fetchJSON(`${BACKEND_BASE_URL}/api/global?max_records=30`);
+        renderGlobalOption(data.articles);
+        renderNewsList(data, true);
+        applyResponsiveLayout();
+      }
+
+      chart.on("click", (params) => {
+        const name = params.name;
+        if (!name) return;
+        fetchJSON(`${BACKEND_BASE_URL}/api/country/${encodeURIComponent(name)}?max_records=50`)
+          .then((data) => renderNewsList(data, false))
+          .catch((error) => {
+            console.error(error);
+            alert("未能获取该国家的新闻，请稍后再试。");
+          });
+      });
+
+      if (toggleMapBtn) {
+        toggleMapBtn.addEventListener("click", () => {
+          if (window.innerWidth > 768) return;
+          mapVisible = !mapVisible;
+          autoCollapsed = false;
+          applyResponsiveLayout();
+        });
+      }
+
+      if (newsPanel) {
+        newsPanel.addEventListener(
+          "scroll",
+          () => {
+            if (window.innerWidth > 768) return;
+            const offset = newsPanel.scrollTop || 0;
+            if (mapVisible && offset > 140) {
+              mapVisible = false;
+              autoCollapsed = true;
+              applyResponsiveLayout();
+            } else if (!mapVisible && autoCollapsed && offset < 40) {
+              mapVisible = true;
+              autoCollapsed = false;
+              applyResponsiveLayout();
+            }
+          },
+          { passive: true }
+        );
+      }
+
+      (async function init() {
+        try {
+          await loadWorldJSON();
+          renderGlobalOption([]);
+          applyResponsiveLayout();
+          await loadGlobalNews();
+          window.addEventListener("resize", applyResponsiveLayout);
+        } catch (error) {
+          console.error(error);
+          alert("初始化失败，请检查网络或后端服务。");
+        }
+      })();
+    </script>
+  </body>
+</html>
