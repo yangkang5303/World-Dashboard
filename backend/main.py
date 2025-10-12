@@ -13,6 +13,7 @@ import os
 from functools import lru_cache
 from typing import Dict, List, Optional
 from urllib.parse import unquote
+
 import httpx
 import pycountry
 from fastapi import FastAPI, HTTPException, Path, Query
@@ -297,7 +298,7 @@ COMMON_COUNTRY_ALIASES: Dict[str, Optional[str]] = {
 "UU":"Undesignated Sovereignty",
 "AE":"United Arab Emirates",
 "UK":"United Kingdom",
-"US":"United States of America",
+"US":"United States",
 "UY":"Uruguay",
 "UZ":"Uzbekistan",
 "NH":"Vanuatu",
@@ -332,7 +333,7 @@ NAME_REWRITES: Dict[str, str] = {
 
 EXTRA_NAME_ALIASES: Dict[str, str] = {
     "usa": "US",
-    "United States of America": "US",
+    "united states of america": "US",
     "america": "US",
     "uk": "GB",
     "great britain": "GB",
@@ -440,15 +441,12 @@ class ArticlesResponse(BaseModel):
 
 app = FastAPI(title="World Dashboard News API", version="0.1.0")
 
-# 允许来自你的前端域名的跨域请求
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https://world-dashboard-alpha(-[a-z0-9\-]+)?\.vercel\.app$",
-    allow_credentials=False,
-    allow_methods=["*"],
+    allow_origins=os.getenv("CORS_ALLOW_ORIGINS", "*").split(","),
+    allow_methods=["GET"],
     allow_headers=["*"],
 )
-
 
 
 class GDELTError(RuntimeError):
@@ -467,8 +465,14 @@ def _normalize_country_code(name_or_code: str) -> Optional[str]:
     if not name_or_code:
         return None
 
-    #code = name_or_code.strip()
-    code = unquote(name_or_code).strip()
+    code = name_or_code.strip()
+    # Handle cases where the path segment is encoded multiple times (e.g. %2520)
+    if code:
+        previous = None
+        while previous != code:
+            previous = code
+            code = unquote(code)
+        code = code.replace("+", " ").strip()
     upper_code = code.upper()
     if len(upper_code) == 2:
         if upper_code in ISO_TO_FIPS:
