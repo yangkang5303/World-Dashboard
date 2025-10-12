@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from typing import Dict, List, Optional
-
+from urllib.parse import unquote
 import httpx
 import pycountry
 from fastapi import FastAPI, HTTPException, Path, Query
@@ -467,7 +467,8 @@ def _normalize_country_code(name_or_code: str) -> Optional[str]:
     if not name_or_code:
         return None
 
-    code = name_or_code.strip()
+    #code = name_or_code.strip()
+    code = unquote(name_or_code).strip()
     upper_code = code.upper()
     if len(upper_code) == 2:
         if upper_code in ISO_TO_FIPS:
