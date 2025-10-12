@@ -443,14 +443,12 @@ app = FastAPI(title="World Dashboard News API", version="0.1.0")
 # 允许来自你的前端域名的跨域请求
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://world-dashboard-alpha.vercel.app",
-        "https://world-dashboard-mo7f-oc7bo54fv-yangkang5303-gmailcoms-projects.vercel.app"  # 如果要支持预览部署，可加这行
-    ],
-    allow_credentials=False,  # 如果要带cookie或auth头，改True
+    allow_origin_regex=r"^https://world-dashboard-alpha(-[a-z0-9\-]+)?\.vercel\.app$",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 class GDELTError(RuntimeError):
