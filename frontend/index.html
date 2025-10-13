@@ -242,6 +242,55 @@
       let mapVisible = true;
       let autoCollapsed = false;
 
+      const COUNTRY_ISO_LOOKUP = new Map();
+
+      function registerCountryLookup(geoJson) {
+        if (!geoJson || !Array.isArray(geoJson.features)) return;
+        geoJson.features.forEach((feature) => {
+          const props = feature?.properties || {};
+          const candidates = [
+            props.iso_a2,
+            props.iso_a2_eh,
+            props.iso_a3,
+            props.iso_a3_eh,
+            props.adm0_a3,
+            props.adm0_iso,
+          ]
+            .map((value) => (typeof value === "string" ? value.trim().toUpperCase() : ""))
+            .filter((value) => value && value.length === 2 && value !== "-99");
+
+          if (!candidates.length) return;
+          const iso2 = candidates[0];
+
+          const nameCandidates = [
+            props.name,
+            props.name_long,
+            props.admin,
+            props.geounit,
+            props.sovereignt,
+            props.brk_name,
+            props.name_sort,
+            props.name_en,
+            props.name_ciawf,
+          ];
+
+          nameCandidates
+            .filter((name) => typeof name === "string" && name.trim())
+            .forEach((name) => {
+              const key = name.trim().toLowerCase();
+              if (!COUNTRY_ISO_LOOKUP.has(key)) {
+                COUNTRY_ISO_LOOKUP.set(key, iso2);
+              }
+            });
+        });
+      }
+
+      function findIsoForCountry(name) {
+        if (!name) return null;
+        const key = name.trim().toLowerCase();
+        return COUNTRY_ISO_LOOKUP.get(key) || null;
+      }
+
       async function loadWorldJSON() {
         let lastError = null;
         for (const url of MAP_SOURCES) {
@@ -252,6 +301,7 @@
             }
             const geoJson = await response.json();
             echarts.registerMap("world", geoJson);
+             registerCountryLookup(geoJson);
             console.info("[Map] Loaded world geoJSON from:", url);
             return;
           } catch (error) {
@@ -556,8 +606,11 @@
 
       chart.on("click", (params) => {
         const name = params.name;
-        if (!name) return;
-        fetchJSON(`${BACKEND_BASE_URL}/api/country/${encodeURIComponent(name)}?max_records=50`)
+        const iso2FromData = params?.data?.iso2;
+        const iso2FromLookup = findIsoForCountry(name);
+        const identifier = iso2FromData || iso2FromLookup || name;
+        if (!identifier) return;
+        fetchJSON(`${BACKEND_BASE_URL}/api/country/${encodeURIComponent(identifier)}?max_records=50`)
           .then((data) => renderNewsList(data, false))
           .catch((error) => {
             console.error(error);
