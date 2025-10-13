@@ -463,18 +463,25 @@ def _country_from_alpha2(code: str) -> Optional[pycountry.db.Country]:
         return None
 
 
+def _decode_country_identifier(value: Optional[str]) -> Optional[str]:
+    """Decode percent-encoded or '+' separated country identifiers."""
+    if not value:
+        return value
+
+    decoded = value.strip()
+    previous: Optional[str] = None
+    while decoded and previous != decoded:
+        previous = decoded
+        decoded = unquote(decoded)
+    if decoded:
+        decoded = decoded.replace("+", " ").strip()
+    return decoded
+
+
 def _normalize_country_code(name_or_code: str) -> Optional[str]:
     if not name_or_code:
         return None
-
-    code = name_or_code.strip()
-    # Handle cases where the path segment is encoded multiple times (e.g. %2520)
-    if code:
-        previous = None
-        while previous != code:
-            previous = code
-            code = unquote(code)
-        code = code.replace("+", " ").strip()
+    code = _decode_country_identifier(name_or_code) or ""
     upper_code = code.upper()
     if len(upper_code) == 2:
         if upper_code in ISO_TO_FIPS:
@@ -649,9 +656,10 @@ async def country_news(
     max_records: int = Query(50, ge=1, le=100, description="Maximum number of articles to return."),
     timespan: str = Query(DEFAULT_TIMESPAN, description="Timespan window (e.g. 24H, 48H, 7D)."),
 ) -> ArticlesResponse:
-    iso2 = _normalize_country_code(country)
+    decoded_country = _decode_country_identifier(country) or country
+    iso2 = _normalize_country_code(decoded_country)
     if not iso2:
-        raise HTTPException(status_code=400, detail=f"Unsupported country identifier: {country}")
+        raise HTTPException(status_code=400, detail=f"Unsupported country identifier: {decoded_country}")
 
     candidate_queries = [
         f"sourcecountry:{iso2} {GLOBAL_QUERY}",
