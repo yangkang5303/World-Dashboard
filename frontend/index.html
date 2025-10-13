@@ -6,7 +6,7 @@
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- 部署静态前端到独立域名时，可在此 meta 中填入后端 API 根路径 -->
+     <!-- 部署静态前端到独立域名时，可在此 meta 中填入后端 API 根路径 -->
     <meta name="backend-base-url" content="https://world-dashboard-mo7f-oc7bo54fv-yangkang5303-gmailcoms-projects.vercel.app" />
     <style>
       :root {
@@ -223,6 +223,614 @@
         (document.querySelector('meta[name="backend-base-url"]')?.getAttribute("content") || "").trim() ||
         (window.location.origin.includes(":") ? "http://localhost:8000" : window.location.origin);
 
+      const COUNTRY_FIPS_MAP = {
+        AF: "Afghanistan",
+        AX: "Akrotiri Sovereign Base Area",
+        AL: "Albania",
+        AG: "Algeria",
+        AQ: "American Samoa",
+        AN: "Andorra",
+        AO: "Angola",
+        AV: "Anguilla",
+        AY: "Antarctica",
+        AC: "Antigua and Barbuda",
+        AR: "Argentina",
+        AM: "Armenia",
+        AA: "Aruba",
+        AT: "Ashmore and Cartier Islands",
+        AS: "Australia",
+        AU: "Austria",
+        AJ: "Azerbaijan",
+        BF: "Bahamas, The",
+        BA: "Bahrain",
+        FQ: "Baker Island",
+        BG: "Bangladesh",
+        BB: "Barbados",
+        BS: "Bassas da India",
+        BO: "Belarus",
+        BE: "Belgium",
+        BH: "Belize",
+        BN: "Benin",
+        BD: "Bermuda",
+        BT: "Bhutan",
+        BL: "Bolivia",
+        BK: "Bosnia-Herzegovina",
+        BC: "Botswana",
+        BV: "Bouvet Island",
+        BR: "Brazil",
+        IO: "British Indian Ocean Territory",
+        VI: "British Virgin Islands",
+        BX: "Brunei",
+        BU: "Bulgaria",
+        UV: "Burkina Faso",
+        BY: "Burundi",
+        CB: "Cambodia",
+        CM: "Cameroon",
+        CA: "Canada",
+        CV: "Cape Verde",
+        CJ: "Cayman Islands",
+        CT: "Central African Republic",
+        CD: "Chad",
+        CI: "Chile",
+        CH: "China",
+        KT: "Christmas Island",
+        IP: "Clipperton Island",
+        CK: "Cocos Keeling Islands",
+        CO: "Colombia",
+        CN: "Comoros",
+        CF: "Congo",
+        CW: "Cook Islands",
+        CR: "Coral Sea Islands",
+        CS: "Costa Rica",
+        IV: "Cote dIvoire",
+        HR: "Croatia",
+        CU: "Cuba",
+        CY: "Cyprus",
+        EZ: "Czech Republic",
+        LO: "Slovakia",
+        CG: "Democratic Republic of the Congo",
+        DA: "Denmark",
+        DX: "Dhekelia Sovereign Base Area",
+        DJ: "Djibouti",
+        DO: "Dominica",
+        DR: "Dominican Republic",
+        TT: "East Timor",
+        EC: "Ecuador",
+        EG: "Egypt",
+        ES: "El Salvador",
+        GV: "Equatorial Guinea",
+        EK: "Equatorial Guinea",
+        ER: "Eritrea",
+        EN: "Estonia",
+        ET: "Ethiopia",
+        PJ: "Etorofu, Habomai, Kunashiri and Shikotan Islands",
+        EU: "Europa Island",
+        FK: "Falkland Islands Islas Malvinas",
+        FO: "Faroe Islands",
+        FJ: "Fiji",
+        FI: "Finland",
+        FR: "France",
+        FG: "French Guiana",
+        FP: "French Polynesia",
+        FS: "French Southern and Antarctic Lands",
+        GB: "Gabon",
+        GA: "Gambia",
+        GZ: "Gaza Strip",
+        GG: "Georgia",
+        GM: "Germany",
+        GH: "Ghana",
+        GI: "Gibraltar",
+        GO: "Glorioso Islands",
+        GR: "Greece",
+        GL: "Greenland",
+        GJ: "Grenada",
+        GP: "Guadeloupe",
+        GQ: "Guam",
+        GT: "Guatemala",
+        GK: "Guernsey",
+        PU: "Guinea-Bissau",
+        GY: "Guyana",
+        HA: "Haiti",
+        HM: "Heard Island and McDonald Islands",
+        HO: "Honduras",
+        HK: "Hong Kong",
+        HQ: "Howland Island",
+        HU: "Hungary",
+        IC: "Iceland",
+        IN: "India",
+        ID: "Indonesia",
+        IR: "Iran",
+        IZ: "Iraq",
+        EI: "Ireland",
+        IM: "Isle of Man",
+        IS: "Israel",
+        IT: "Italy",
+        JM: "Jamaica",
+        JN: "Jan Mayen",
+        JA: "Japan",
+        DQ: "Jarvis Island",
+        JE: "Jersey",
+        JQ: "Johnston Atoll",
+        JO: "Jordan",
+        JU: "Juan de Nova Island",
+        KZ: "Kazakhstan",
+        KE: "Kenya",
+        KQ: "Kingman Reef",
+        KR: "Kiribati",
+        KV: "Kosovo",
+        KU: "Kuwait",
+        KG: "Kyrgyzstan",
+        LA: "Laos",
+        LG: "Latvia",
+        LE: "Lebanon",
+        LT: "Lesotho",
+        LI: "Liberia",
+        LY: "Libya",
+        LS: "Liechtenstein",
+        LH: "Lithuania",
+        LU: "Luxembourg",
+        MC: "Macau",
+        MK: "Macedonia",
+        MA: "Madagascar",
+        MI: "Malawi",
+        MY: "Malaysia",
+        MV: "Maldives",
+        ML: "Mali",
+        MT: "Malta",
+        RM: "Marshall Islands",
+        MB: "Martinique",
+        MR: "Mauritania",
+        MP: "Mauritius",
+        MF: "Mayotte",
+        MX: "Mexico",
+        FM: "Micronesia",
+        MQ: "Midway Islands",
+        MD: "Moldova",
+        MN: "Monaco",
+        MG: "Mongolia",
+        MJ: "Montenegro",
+        MH: "Montserrat",
+        MO: "Morocco",
+        MZ: "Mozambique",
+        BM: "Myanmar",
+        WA: "Namibia",
+        NR: "Nauru",
+        BQ: "Navassa Island",
+        NP: "Nepal",
+        NL: "Netherlands",
+        NT: "Netherlands Antilles",
+        NC: "New Caledonia",
+        NZ: "New Zealand",
+        NU: "Nicaragua",
+        NG: "Niger",
+        NI: "Nigeria",
+        NE: "Niue",
+        NM: "No Mans Land",
+        NF: "Norfolk Island",
+        KN: "North Korea",
+        CQ: "Northern Mariana Islands",
+        NO: "Norway",
+        OS: "Oceans",
+        MU: "Oman",
+        PK: "Pakistan",
+        PS: "Palau",
+        LQ: "Palmyra Atoll",
+        PM: "Panama",
+        PP: "Papua New Guinea",
+        PF: "Paracel Islands",
+        PA: "Paraguay",
+        PE: "Peru",
+        RP: "Philippines",
+        PC: "Pitcairn Islands",
+        PL: "Poland",
+        PO: "Portugal",
+        RQ: "Puerto Rico",
+        QA: "Qatar",
+        RE: "Reunion",
+        RO: "Romania",
+        RS: "Russia",
+        RW: "Rwanda",
+        SH: "Saint Helena",
+        SC: "Saint Kitts and Nevis",
+        ST: "Saint Lucia",
+        RN: "Saint Martin",
+        SB: "Saint Pierre and Miquelon",
+        VC: "Saint Vincent and the Grenadines",
+        TB: "Saint-Barthelemy Island",
+        WS: "Samoa",
+        SM: "San Marino",
+        TP: "Sao Tome and Principe",
+        SA: "Saudi Arabia",
+        SG: "Senegal",
+        RI: "Serbia",
+        SE: "Seychelles",
+        SL: "Sierra Leone",
+        SN: "Singapore",
+        SI: "Slovenia",
+        BP: "Solomon Islands",
+        SO: "Somalia",
+        SF: "South Africa",
+        SX: "South Georgia and the South Sandwich Islands",
+        KS: "South Korea",
+        OD: "South Sudan",
+        SP: "Spain",
+        PG: "Spratly Islands",
+        CE: "Sri Lanka",
+        SU: "Sudan",
+        NS: "Suriname",
+        SV: "Svalbard",
+        WZ: "Swaziland",
+        SW: "Sweden",
+        SZ: "Switzerland",
+        SY: "Syria",
+        TW: "Taiwan",
+        TI: "Tajikistan",
+        TZ: "Tanzania",
+        TH: "Thailand",
+        TO: "Togo",
+        TL: "Tokelau",
+        TN: "Tonga",
+        TD: "Trinidad and Tobago",
+        TE: "Tromelin Island",
+        TS: "Tunisia",
+        TU: "Turkey",
+        TX: "Turkmenistan",
+        TK: "Turks and Caicos Islands",
+        TV: "Tuvalu",
+        UG: "Uganda",
+        UP: "Ukraine",
+        UF: "Undersea Features",
+        UU: "Undesignated Sovereignty",
+        AE: "United Arab Emirates",
+        UK: "United Kingdom",
+        US: "United States",
+        UY: "Uruguay",
+        UZ: "Uzbekistan",
+        NH: "Vanuatu",
+        VT: "Vatican City",
+        VE: "Venezuela",
+        VM: "Vietnam, Democratic Republic of",
+        VQ: "Virgin Islands",
+        WQ: "Wake Island",
+        WF: "Wallis and Futuna",
+        WE: "West Bank",
+        WI: "Western Sahara",
+        YM: "Yemen",
+        ZA: "Zambia",
+        ZI: "Zimbabwe",
+      };
+
+      const ISO_TO_FIPS = {
+        AD: "AN",
+        AE: "AE",
+        AF: "AF",
+        AG: "AC",
+        AI: "AV",
+        AL: "AL",
+        AM: "AM",
+        AO: "AO",
+        AQ: "AY",
+        AR: "AR",
+        AS: "AQ",
+        AT: "AU",
+        AU: "AS",
+        AW: "AA",
+        AZ: "AJ",
+        BB: "BB",
+        BD: "BG",
+        BE: "BE",
+        BF: "UV",
+        BG: "BU",
+        BH: "BA",
+        BI: "BY",
+        BJ: "BN",
+        BM: "BD",
+        BO: "BL",
+        BR: "BR",
+        BS: "BF",
+        BT: "BT",
+        BV: "BV",
+        BW: "BC",
+        BY: "BO",
+        BZ: "BH",
+        CA: "CA",
+        CF: "CT",
+        CG: "CF",
+        CH: "SZ",
+        CK: "CW",
+        CL: "CI",
+        CM: "CM",
+        CN: "CH",
+        CO: "CO",
+        CR: "CS",
+        CU: "CU",
+        CX: "KT",
+        CY: "CY",
+        CZ: "EZ",
+        DE: "GM",
+        DJ: "DJ",
+        DK: "DA",
+        DM: "DO",
+        DO: "DR",
+        DZ: "AG",
+        EC: "EC",
+        EE: "EN",
+        EG: "EG",
+        EH: "WI",
+        ER: "ER",
+        ES: "SP",
+        ET: "ET",
+        FI: "FI",
+        FJ: "FJ",
+        FM: "FM",
+        FO: "FO",
+        FR: "FR",
+        GA: "GB",
+        GB: "UK",
+        GD: "GJ",
+        GE: "GG",
+        GF: "FG",
+        GG: "GK",
+        GH: "GH",
+        GI: "GI",
+        GL: "GL",
+        GM: "GA",
+        GP: "GP",
+        GQ: "EK",
+        GR: "GR",
+        GS: "SX",
+        GT: "GT",
+        GU: "GQ",
+        GW: "PU",
+        GY: "GY",
+        HK: "HK",
+        HM: "HM",
+        HN: "HO",
+        HR: "HR",
+        HT: "HA",
+        HU: "HU",
+        ID: "ID",
+        IE: "EI",
+        IL: "IS",
+        IM: "IM",
+        IN: "IN",
+        IO: "IO",
+        IQ: "IZ",
+        IR: "IR",
+        IS: "IC",
+        IT: "IT",
+        JE: "JE",
+        JM: "JM",
+        JO: "JO",
+        JP: "JA",
+        KE: "KE",
+        KG: "KG",
+        KH: "CB",
+        KI: "KR",
+        KM: "CN",
+        KN: "SC",
+        KP: "KN",
+        KR: "KS",
+        KW: "KU",
+        KY: "CJ",
+        KZ: "KZ",
+        LA: "LA",
+        LB: "LE",
+        LC: "ST",
+        LI: "LS",
+        LK: "CE",
+        LR: "LI",
+        LS: "LT",
+        LT: "LH",
+        LU: "LU",
+        LV: "LG",
+        LY: "LY",
+        MA: "MO",
+        MC: "MN",
+        MD: "MD",
+        ME: "MJ",
+        MG: "MA",
+        MH: "RM",
+        MK: "MK",
+        ML: "ML",
+        MM: "BM",
+        MN: "MG",
+        MP: "CQ",
+        MQ: "MB",
+        MR: "MR",
+        MS: "MH",
+        MT: "MT",
+        MU: "MP",
+        MV: "MV",
+        MW: "MI",
+        MX: "MX",
+        MY: "MY",
+        MZ: "MZ",
+        NA: "WA",
+        NC: "NC",
+        NE: "NG",
+        NF: "NF",
+        NG: "NI",
+        NI: "NU",
+        NL: "NL",
+        NO: "NO",
+        NP: "NP",
+        NR: "NR",
+        NU: "NE",
+        NZ: "NZ",
+        OM: "MU",
+        PA: "PM",
+        PE: "PE",
+        PF: "FP",
+        PG: "PP",
+        PH: "RP",
+        PK: "PK",
+        PL: "PL",
+        PM: "SB",
+        PR: "RQ",
+        PS: "GZ",
+        PT: "PO",
+        PW: "PS",
+        PY: "PA",
+        QA: "QA",
+        RO: "RO",
+        RS: "RI",
+        RU: "RS",
+        RW: "RW",
+        SA: "SA",
+        SB: "BP",
+        SC: "SE",
+        SD: "SU",
+        SE: "SW",
+        SG: "SN",
+        SI: "SI",
+        SK: "LO",
+        SL: "SL",
+        SM: "SM",
+        SN: "SG",
+        SO: "SO",
+        SR: "NS",
+        SS: "OD",
+        ST: "TP",
+        SV: "ES",
+        SY: "SY",
+        SZ: "WZ",
+        TC: "TK",
+        TD: "CD",
+        TG: "TO",
+        TH: "TH",
+        TJ: "TI",
+        TK: "TL",
+        TM: "TX",
+        TN: "TS",
+        TO: "TN",
+        TT: "TD",
+        TV: "TV",
+        TW: "TW",
+        TZ: "TZ",
+        UA: "UP",
+        UG: "UG",
+        US: "US",
+        UY: "UY",
+        UZ: "UZ",
+        VC: "VC",
+        VE: "VE",
+        VG: "VI",
+        VU: "NH",
+        WF: "WF",
+        WS: "WS",
+        YE: "YM",
+        YT: "MF",
+        ZA: "SF",
+        ZM: "ZA",
+        ZW: "ZI",
+      };
+
+      const EXTRA_FIPS_ALIASES = {
+        "usa": "US",
+        "united states": "US",
+        "united states of america": "US",
+        "america": "US",
+        "u s a": "US",
+        "uk": "UK",
+        "united kingdom": "UK",
+        "great britain": "UK",
+        "britain": "UK",
+        "england": "UK",
+        "china": "CH",
+        "people s republic of china": "CH",
+        "mainland china": "CH",
+        "russia": "RS",
+        "russian federation": "RS",
+        "south korea": "KS",
+        "korea republic of": "KS",
+        "republic of korea": "KS",
+        "north korea": "KN",
+        "democratic people s republic of korea": "KN",
+        "dprk": "KN",
+        "cote d ivoire": "IV",
+        "cote divoire": "IV",
+        "ivory coast": "IV",
+        "democratic republic of the congo": "CG",
+        "republic of the congo": "CF",
+        "congo kinshasa": "CG",
+        "congo brazzaville": "CF",
+        "hong kong": "HK",
+        "macau": "MC",
+        "macao": "MC",
+        "palestine": "WE",
+        "state of palestine": "WE",
+        "gaza strip": "GZ",
+        "west bank": "WE",
+        "vatican city": "VT",
+        "holy see": "VT",
+        "laos": "LA",
+        "myanmar": "BM",
+        "burma": "BM",
+        "tanzania": "TZ",
+        "czech republic": "EZ",
+        "czechia": "EZ",
+        "slovakia": "LO",
+        "eswatini": "WZ",
+        "swaziland": "WZ",
+        "cape verde": "CV",
+        "sao tome and principe": "TP",
+        "timor leste": "TT",
+        "taiwan": "TW",
+        "viet nam": "VM",
+        "vietnam": "VM",
+        "south sudan": "OD",
+        "micronesia": "FM",
+        "federated states of micronesia": "FM",
+        "saint barthelemy": "TB",
+        "saint barts": "TB",
+        "saint barthélemy": "TB",
+        "saint martin": "RN",
+        "réunion": "RE",
+        "reunion": "RE",
+        "curaçao": "NT",
+        "curacao": "NT"
+      };
+
+      function normalizeCountryKey(name) {
+        return name
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/&/g, " and ")
+          .replace(/['’]/g, "")
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+      }
+
+      const COUNTRY_CODE_BY_NAME = new Map();
+      Object.entries(COUNTRY_FIPS_MAP).forEach(([code, label]) => {
+        if (typeof label !== "string" || !label.trim()) return;
+        const normalized = normalizeCountryKey(label);
+        if (normalized && !COUNTRY_CODE_BY_NAME.has(normalized)) {
+          COUNTRY_CODE_BY_NAME.set(normalized, code);
+        }
+        if (label.includes(",")) {
+          const alt = normalizeCountryKey(label.replace(/,/g, " "));
+          if (alt && !COUNTRY_CODE_BY_NAME.has(alt)) {
+            COUNTRY_CODE_BY_NAME.set(alt, code);
+          }
+        }
+      });
+
+      Object.entries(EXTRA_FIPS_ALIASES).forEach(([alias, code]) => {
+        const normalized = normalizeCountryKey(alias);
+        if (normalized) {
+          COUNTRY_CODE_BY_NAME.set(normalized, code);
+        }
+      });
+
+      Object.keys(COUNTRY_FIPS_MAP).forEach((code) => {
+        COUNTRY_CODE_BY_NAME.set(code.toLowerCase(), code);
+      });
+
+      const COUNTRY_CODE_LOOKUP = new Map();
+
       const DEFAULT_MAP_SOURCES = [
         "./world.geo.json",
         "https://fastly.jsdelivr.net/npm/echarts@5/examples/data/asset/world.geo.json",
@@ -242,25 +850,22 @@
       let mapVisible = true;
       let autoCollapsed = false;
 
-      const COUNTRY_ISO_LOOKUP = new Map();
-
       function registerCountryLookup(geoJson) {
         if (!geoJson || !Array.isArray(geoJson.features)) return;
         geoJson.features.forEach((feature) => {
           const props = feature?.properties || {};
-          const candidates = [
+          const isoCandidates = [
             props.iso_a2,
             props.iso_a2_eh,
             props.iso_a3,
             props.iso_a3_eh,
             props.adm0_a3,
             props.adm0_iso,
+            props.wb_a2,
+            props.wb_a3,
           ]
             .map((value) => (typeof value === "string" ? value.trim().toUpperCase() : ""))
             .filter((value) => value && value.length === 2 && value !== "-99");
-
-          if (!candidates.length) return;
-          const iso2 = candidates[0];
 
           const nameCandidates = [
             props.name,
@@ -274,21 +879,57 @@
             props.name_ciawf,
           ];
 
+          let resolvedCode = null;
+          for (const candidate of nameCandidates) {
+            const normalized = typeof candidate === "string" ? normalizeCountryKey(candidate) : "";
+            if (!normalized) continue;
+            const code = COUNTRY_CODE_BY_NAME.get(normalized);
+            if (code) {
+              resolvedCode = code;
+              break;
+            }
+          }
+
+          if (!resolvedCode) {
+            for (const isoCandidate of isoCandidates) {
+              if (COUNTRY_FIPS_MAP[isoCandidate]) {
+                resolvedCode = isoCandidate;
+                break;
+              }
+              const mapped = ISO_TO_FIPS[isoCandidate];
+              if (mapped && COUNTRY_FIPS_MAP[mapped]) {
+                resolvedCode = mapped;
+                break;
+              }
+            }
+          }
+
+          if (!resolvedCode) return;
+
+          isoCandidates.forEach((code) => {
+            const normalizedIso = normalizeCountryKey(code);
+            if (normalizedIso && !COUNTRY_CODE_LOOKUP.has(normalizedIso)) {
+              COUNTRY_CODE_LOOKUP.set(normalizedIso, resolvedCode);
+            }
+          });
+
           nameCandidates
             .filter((name) => typeof name === "string" && name.trim())
             .forEach((name) => {
-              const key = name.trim().toLowerCase();
-              if (!COUNTRY_ISO_LOOKUP.has(key)) {
-                COUNTRY_ISO_LOOKUP.set(key, iso2);
+              const normalized = normalizeCountryKey(name);
+              if (normalized && !COUNTRY_CODE_LOOKUP.has(normalized)) {
+                COUNTRY_CODE_LOOKUP.set(normalized, resolvedCode);
               }
             });
+
+          COUNTRY_CODE_LOOKUP.set(resolvedCode.toLowerCase(), resolvedCode);
         });
       }
 
-      function findIsoForCountry(name) {
+      function findCountryCode(name) {
         if (!name) return null;
-        const key = name.trim().toLowerCase();
-        return COUNTRY_ISO_LOOKUP.get(key) || null;
+        const key = normalizeCountryKey(name);
+        return COUNTRY_CODE_LOOKUP.get(key) || COUNTRY_CODE_BY_NAME.get(key) || null;
       }
 
       async function loadWorldJSON() {
@@ -301,7 +942,7 @@
             }
             const geoJson = await response.json();
             echarts.registerMap("world", geoJson);
-             registerCountryLookup(geoJson);
+            registerCountryLookup(geoJson);
             console.info("[Map] Loaded world geoJSON from:", url);
             return;
           } catch (error) {
@@ -328,36 +969,36 @@
         return date.toISOString().replace("T", " ").slice(0, 16) + " UTC";
       }
 
-      const MAP_NAME_BY_ISO = {
+      const MAP_NAME_BY_CODE = {
         US: "United States of America",
-        GB: "United Kingdom",
-        RU: "Russia",
-        CI: "Côte d'Ivoire",
-        CD: "Democratic Republic of the Congo",
-        CG: "Republic of the Congo",
+        UK: "United Kingdom",
+        RS: "Russia",
+        IV: "Côte d'Ivoire",
+        CG: "Democratic Republic of the Congo",
+        CF: "Republic of the Congo",
         IR: "Iran",
-        KP: "Dem. Rep. Korea",
-        KR: "Korea",
+        KN: "Dem. Rep. Korea",
+        KS: "Korea",
         LA: "Lao PDR",
         SY: "Syria",
-        PS: "Palestine",
-        CZ: "Czech Rep.",
+        WE: "Palestine",
+        EZ: "Czech Republic",
         TZ: "Tanzania",
-        VN: "Vietnam",
+        VM: "Vietnam",
         VE: "Venezuela",
-        MF: "Saint Martin",
-        BL: "Saint Barthelemy",
+        RN: "Saint Martin",
+        TB: "Saint Barthelemy",
         TW: "Taiwan",
         HK: "Hong Kong",
-        MO: "Macao",
-        XK: "Kosovo",
-        SS: "South Sudan",
+        MC: "Macao",
+        KV: "Kosovo",
+        OD: "South Sudan",
       };
 
-      function resolveMapName(iso2, fallbackName) {
-        if (!iso2) return fallbackName || "Unknown";
-        const upper = iso2.toUpperCase();
-        if (MAP_NAME_BY_ISO[upper]) return MAP_NAME_BY_ISO[upper];
+      function resolveMapName(code, fallbackName) {
+        if (!code) return fallbackName || "Unknown";
+        const upper = code.toUpperCase();
+        if (MAP_NAME_BY_CODE[upper]) return MAP_NAME_BY_CODE[upper];
         return fallbackName || upper;
       }
 
@@ -369,14 +1010,14 @@
         articles.forEach((article) => {
           const countries = Array.isArray(article.countries) ? article.countries : [];
           countries.forEach((country) => {
-            const iso2 = country.iso2 ? country.iso2.toUpperCase() : undefined;
-            const key = iso2 || (country.name || Math.random().toString()).toUpperCase();
-            const displayName = resolveMapName(iso2, country.name || iso2);
+            const countryCode = country.iso2 ? country.iso2.toUpperCase() : undefined;
+            const key = countryCode || (country.name || Math.random().toString()).toUpperCase();
+            const displayName = resolveMapName(countryCode, country.name || countryCode);
 
             if (!areaMap.has(key)) {
               areaMap.set(key, {
                 name: displayName,
-                iso2: iso2 || null,
+                iso2: countryCode || null,
                 value: 0,
                 headlines: new Set(),
               });
@@ -392,7 +1033,7 @@
               if (!scatterMap.has(key)) {
                 scatterMap.set(key, {
                   name: displayName,
-                  iso2: iso2 || null,
+                  iso2: countryCode || null,
                   value: [country.lon, country.lat, 0],
                   headlines: new Set(),
                 });
@@ -606,9 +1247,9 @@
 
       chart.on("click", (params) => {
         const name = params.name;
-        const iso2FromData = params?.data?.iso2;
-        const iso2FromLookup = findIsoForCountry(name);
-        const identifier = iso2FromData || iso2FromLookup || name;
+        const codeFromData = params?.data?.iso2 ? String(params.data.iso2).toUpperCase() : null;
+        const codeFromLookup = findCountryCode(name);
+        const identifier = codeFromData || (codeFromLookup ? codeFromLookup.toUpperCase() : name);
         if (!identifier) return;
         fetchJSON(`${BACKEND_BASE_URL}/api/country/${encodeURIComponent(identifier)}?max_records=50`)
           .then((data) => renderNewsList(data, false))
