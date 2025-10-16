@@ -563,7 +563,7 @@ def _format_article(raw: Dict) -> Article:
         title=raw.get("title", "Untitled"),
         url=raw.get("url"),
         time=raw.get("seendate"),
-        source=raw.get("source"),
+        source=raw.get("domain"),
         source_country=_normalize_country_code(raw.get("sourcecountry") or raw.get("domaincountry")),
         summary=raw.get("excerpt") or raw.get("summary"),
         tone=_safe_float(raw.get("tone")),
