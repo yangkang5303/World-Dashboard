@@ -390,7 +390,8 @@ def _register_country_alias(name: Optional[str], code: str) -> None:
     normalized = name.strip().lower()
     if not normalized:
         return
-    NAME_TO_ISO.setdefault(normalized, code.upper())
+    canonical = FIPS_TO_ISO.get(code.upper(), code.upper())
+    NAME_TO_ISO.setdefault(normalized, canonical)
 
 for fips_code, display_name in COMMON_COUNTRY_ALIASES.items():
     if not display_name:
@@ -433,9 +434,20 @@ class ArticlesResponse(BaseModel):
 
 app = FastAPI(title="World Dashboard News API", version="0.1.0")
 
+raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "")
+allow_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+if not allow_origins:
+    allow_origins = ["*"]
+
+allow_origin_regex = os.getenv(
+    "CORS_ALLOW_ORIGIN_REGEX",
+    r"https://world-dashboard-[^.]+\.vercel\.app",
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ALLOW_ORIGINS", "*").split(","),
+    allow_origins=allow_origins,
+    allow_origin_regex=allow_origin_regex,
     allow_methods=["GET"],
     allow_headers=["*"],
 )
@@ -474,12 +486,12 @@ def _normalize_country_code(name_or_code: str) -> Optional[str]:
     code = _decode_country_identifier(name_or_code) or ""
     upper_code = code.upper()
     if len(upper_code) == 2:
-        if upper_code in ISO_TO_FIPS:
-            # Already ISO
-            return upper_code
         iso_from_fips = FIPS_TO_ISO.get(upper_code)
         if iso_from_fips:
             return iso_from_fips
+        if upper_code in ISO_TO_FIPS:
+            # Already ISO
+            return upper_code
 
     alias_match = NAME_TO_ISO.get(code.lower())
     if alias_match:
@@ -650,16 +662,52 @@ def deduplicate_articles(articles: List[Article]) -> List[Article]:
     return deduped
 
 
+def _normalized_global_query() -> Optional[str]:
+    query = (GLOBAL_QUERY or "").strip()
+    if not query:
+        return None
+    if not (query.startswith("(") and query.endswith(")")):
+        return f"({query})"
+    return query
+
+
+def _combine_with_global(base: str) -> str:
+    normalized = _normalized_global_query()
+    if normalized:
+        return f"{base} AND {normalized}"
+    return base
+
+
+def _is_too_common_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if not message:
+        return False
+    keywords = (
+        "too common",
+        "too short",
+        "too long",
+    )
+    return any(keyword in message for keyword in keywords)
+
+
+def _format_gdelt_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return message
+    return exc.__class__.__name__
+
+
 @app.get("/api/global", response_model=ArticlesResponse)
 async def global_news(
     max_records: int = Query(20, ge=1, le=200, description="Maximum number of articles to return."),
     timespan: str = Query(DEFAULT_TIMESPAN, description="Timespan window (e.g. 24H, 48H, 7D)."),
     query: str = Query(GLOBAL_QUERY, description="GDELT query string."),
-) -> ArticlesResponse:
+    ) -> ArticlesResponse:
     try:
         raw_articles = await _fetch_articles(query=query, timespan=timespan, maxrecords=min(max_records, GLOBAL_MAX_RECORDS))
     except (httpx.HTTPError, GDELTError) as exc:
-        raise HTTPException(status_code=502, detail=f"GDELT request failed: {exc}") from exc
+        formatted = _format_gdelt_error(exc)
+        raise HTTPException(status_code=502, detail=f"GDELT request failed: {formatted}") from exc
 
     articles = [ _format_article(article) for article in raw_articles ]
     articles = deduplicate_articles(articles)[:max_records]
@@ -677,15 +725,23 @@ async def country_news(
     if not iso2:
         raise HTTPException(status_code=400, detail=f"Unsupported country identifier: {decoded_country}")
 
-    candidate_queries = [
-        f"sourcecountry:{iso2} {GLOBAL_QUERY}",
-        f"locationcountry:{iso2} {GLOBAL_QUERY}",
-        f"locationcountry:{iso2}",
+    fips_code = ISO_TO_FIPS.get(iso2.upper(), iso2.upper())
+
+    candidate_queries: List[str] = [
+        _combine_with_global(f"sourcecountry:{fips_code}"),
+        _combine_with_global(f"locationcountry:{fips_code}"),
+        _combine_with_global(f"(sourcecountry:{fips_code} OR locationcountry:{fips_code})"),
     ]
 
-    raw_articles = []
+    # Allow fallbacks without the global query in case it is overly restrictive.
+    candidate_queries.append(f"sourcecountry:{fips_code}")
+    candidate_queries.append(f"locationcountry:{fips_code}")
+
+    raw_articles: List[Dict] = []
     chosen_query = candidate_queries[0]
     last_error: Optional[Exception] = None
+    too_common_error: Optional[Exception] = None
+    had_successful_response = False
 
     for candidate in candidate_queries:
         try:
@@ -696,18 +752,25 @@ async def country_news(
             )
         except (httpx.HTTPError, GDELTError) as exc:
             last_error = exc
+            chosen_query = candidate
+            if _is_too_common_error(exc):
+                too_common_error = exc
             continue
 
-        if result:
-            raw_articles = result
-            chosen_query = candidate
-            break
-        # store empty result but keep searching for fallback
-        raw_articles = result
+        had_successful_response = True
         chosen_query = candidate
+        raw_articles = result or []
+        if raw_articles:
+            break
 
-    if last_error and not raw_articles:
-        raise HTTPException(status_code=502, detail=f"GDELT request failed: {last_error}") from last_error
+    if not had_successful_response:
+        default_query = candidate_queries[0] if candidate_queries else ""
+        if too_common_error:
+            return ArticlesResponse(query=default_query or chosen_query, count=0, articles=[])
+        if last_error:
+            formatted = _format_gdelt_error(last_error)
+            raise HTTPException(status_code=502, detail=f"GDELT request failed: {formatted}") from last_error
+        return ArticlesResponse(query=default_query or chosen_query, count=0, articles=[])
 
     articles = [_format_article(article) for article in raw_articles]
     articles = deduplicate_articles(articles)[:max_records]
