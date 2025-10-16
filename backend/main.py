@@ -331,32 +331,6 @@ NAME_REWRITES: Dict[str, str] = {
     "Gaza Strip": "Palestine, State of",
 }
 
-EXTRA_NAME_ALIASES: Dict[str, str] = {
-    "usa": "US",
-    "united states of america": "US",
-    "united states": "US",
-    "america": "US",
-    "uk": "GB",
-    "united kingdom": "GB",
-    "great britain": "GB",
-    "britain": "GB",
-    "south korea": "KR",
-    "north korea": "KP",
-    "russia": "RU",
-    "russian federation": "RU",
-    "hong kong": "HK",
-    "macau": "MO",
-    "macao": "MO",
-    "palestine": "PS",
-    "state of palestine": "PS",
-    "holy see": "VA",
-    "laos": "LA",
-    "cote d'ivoire": "CI",
-    "cote d’ivoire": "CI",
-    "ivory coast": "CI",
-}
-
-NAME_TO_ISO: Dict[str, str] = {}
 ISO_TO_FIPS: Dict[str, str] = {}
 
 for fips_code, display_name in COMMON_COUNTRY_ALIASES.items():
@@ -372,46 +346,62 @@ for fips_code, display_name in COMMON_COUNTRY_ALIASES.items():
 
     iso_code = country.alpha_2.upper()
     ISO_TO_FIPS[iso_code] = fips_code
-    NAME_TO_ISO[display_name.lower()] = iso_code
-    if normalized_name:
-        NAME_TO_ISO[normalized_name.lower()] = iso_code
-
-for alias, iso_code in EXTRA_NAME_ALIASES.items():
-    NAME_TO_ISO[alias.lower()] = iso_code.upper()
 
 FIPS_TO_ISO: Dict[str, str] = {fips: iso for iso, fips in ISO_TO_FIPS.items()}
 
-NAME_TO_ISO: Dict[str, str] = {
-    name.lower(): code
-    for code, name in COMMON_COUNTRY_ALIASES.items()
-    if isinstance(name, str) and name
-}
-
-NAME_TO_ISO.update({
+EXTRA_FIPS_ALIASES: Dict[str, str] = {
     "usa": "US",
+    "united states": "US",
     "united states of america": "US",
     "america": "US",
     "uk": "UK",
+    "united kingdom": "UK",
     "great britain": "UK",
     "britain": "UK",
+    "england": "UK",
     "russia": "RS",
     "russian federation": "RS",
     "south korea": "KS",
+    "republic of korea": "KS",
     "north korea": "KN",
-    "ivory coast": "IV",
+    "dprk": "KN",
+    "palestine": "WE",
+    "state of palestine": "WE",
+    "gaza strip": "GZ",
+    "west bank": "WE",
+    "holy see": "VT",
+    "vatican city": "VT",
+    "laos": "LA",
     "cote d'ivoire": "IV",
     "cote d’ivoire": "IV",
+    "ivory coast": "IV",
     "hong kong": "HK",
     "macau": "MC",
     "macao": "MC",
-    "palestine": "WE",
-    "state of palestine": "WE",
-    "vatican city": "VT",
-    "holy see": "VT",
-    "laos": "LA",
     "republic of moldova": "MD",
     "islamic republic of iran": "IR",
-})
+}
+
+NAME_TO_ISO: Dict[str, str] = {}
+
+def _register_country_alias(name: Optional[str], code: str) -> None:
+    if not name:
+        return
+    normalized = name.strip().lower()
+    if not normalized:
+        return
+    NAME_TO_ISO.setdefault(normalized, code.upper())
+
+for fips_code, display_name in COMMON_COUNTRY_ALIASES.items():
+    if not display_name:
+        continue
+    _register_country_alias(display_name, fips_code)
+    rewritten = NAME_REWRITES.get(display_name)
+    if rewritten:
+        _register_country_alias(rewritten, fips_code)
+
+for alias, code in EXTRA_FIPS_ALIASES.items():
+    _register_country_alias(alias, code)
 
 
 
@@ -699,7 +689,8 @@ async def country_news(
     return ArticlesResponse(query=chosen_query, count=len(articles), articles=articles)
 
 
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
+@app.get("/api/health", include_in_schema=False)
 async def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
 
