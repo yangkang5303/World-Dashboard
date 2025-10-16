@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from typing import Dict, List, Optional
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import httpx
 import pycountry
@@ -553,17 +553,43 @@ def _safe_float(value) -> Optional[float]:
         return None
 
 
+def _extract_domain_from_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    host = parsed.netloc or parsed.path
+    host = host.strip().lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host or None
+
+
 def _format_article(raw: Dict) -> Article:
     themes = raw.get("themes") or []
     if isinstance(themes, str):
         themes = [theme.strip() for theme in themes.split(",") if theme.strip()]
+
+    source_value = raw.get("domain")
+    if isinstance(source_value, str):
+        source_value = source_value.strip() or None
+    else:
+        source_value = None
+    if not source_value:
+        fallback_source = raw.get("source")
+        if isinstance(fallback_source, str):
+            source_value = fallback_source.strip() or None
+    if not source_value:
+        source_value = _extract_domain_from_url(raw.get("url"))
 
     return Article(
         id=str(raw.get("id") or raw.get("url") or raw.get("guid") or raw.get("seendate")),
         title=raw.get("title", "Untitled"),
         url=raw.get("url"),
         time=raw.get("seendate"),
-        source=raw.get("domain") or raw.get("source"),
+        source=source_value,
         source_country=_normalize_country_code(raw.get("sourcecountry") or raw.get("domaincountry")),
         summary=raw.get("excerpt") or raw.get("summary"),
         tone=_safe_float(raw.get("tone")),
