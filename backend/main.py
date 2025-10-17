@@ -409,6 +409,7 @@ for alias, code in EXTRA_FIPS_ALIASES.items():
 class CountryRef(BaseModel):
     name: Optional[str]
     iso2: Optional[str]
+    fips: Optional[str]
     lat: Optional[float]
     lon: Optional[float]
 
@@ -437,11 +438,11 @@ app = FastAPI(title="World Dashboard News API", version="0.1.0")
 raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "")
 allow_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
 if not allow_origins:
-    allow_origins = ["*"]
+    allow_origins = ["https://world-dashboard-mo7f.vercel.app"]
 
 allow_origin_regex = os.getenv(
     "CORS_ALLOW_ORIGIN_REGEX",
-    r"https://world-dashboard-[^.]+\.vercel\.app",
+    r"https://world-dashboard-mo7f\.vercel\.app",
 )
 
 app.add_middleware(
@@ -530,10 +531,12 @@ def _extract_countries(article: Dict) -> List[CountryRef]:
         if iso2 in seen_codes:
             continue
 
+        fips_code = ISO_TO_FIPS.get(iso2.upper()) if iso2 else None
         countries.append(
             CountryRef(
                 name=loc.get("name") or loc.get("countryname"),
                 iso2=iso2,
+                fips=fips_code,
                 lat=_safe_float(loc.get("latitude") or loc.get("lat")),
                 lon=_safe_float(loc.get("longitude") or loc.get("lon")),
             )
@@ -546,10 +549,12 @@ def _extract_countries(article: Dict) -> List[CountryRef]:
     iso2 = _normalize_country_code(article.get("sourcecountry"))
     if iso2:
         country_obj = _country_from_alpha2(iso2)
+        fips_code = ISO_TO_FIPS.get(iso2.upper())
         countries.append(
             CountryRef(
                 name=getattr(country_obj, "name", iso2),
                 iso2=iso2,
+                fips=fips_code,
                 lat=_safe_float(article.get("lat")),
                 lon=_safe_float(article.get("lon")),
             )
