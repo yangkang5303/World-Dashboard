@@ -438,11 +438,14 @@ app = FastAPI(title="World Dashboard News API", version="0.1.0")
 raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "")
 allow_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
 if not allow_origins:
-    allow_origins = ["https://world-dashboard-mo7f.vercel.app"]
+    allow_origins = [
+        "https://world-dashboard-mo7f.vercel.app",
+        "https://world-dashboard-alpha.vercel.app",
+    ]
 
 allow_origin_regex = os.getenv(
     "CORS_ALLOW_ORIGIN_REGEX",
-    r"https://world-dashboard-mo7f\.vercel\.app",
+    r"https://world-dashboard-(?:mo7f|alpha)\.vercel\.app",
 )
 
 app.add_middleware(
