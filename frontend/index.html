@@ -1239,7 +1239,7 @@
       }
 
       async function loadGlobalNews() {
-        const data = await fetchJSON(`${BACKEND_BASE_URL}/api/global?max_records=30`);
+        const data = await fetchJSON(`${BACKEND_BASE_URL}/api/global?max_records=50`);
         renderGlobalOption(data.articles);
         renderNewsList(data, true);
         applyResponsiveLayout();
