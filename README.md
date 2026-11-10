@@ -35,7 +35,7 @@ npm test           # 单元测试
 npx wrangler login
 npm run deploy
 ```
-首次部署时 wrangler 会自动创建 KV 命名空间 `NEWS_KV` 并注册定时任务。部署完成后会输出 `https://world-dashboard.<你的子域>.workers.dev`。
+KV 命名空间（`wrangler.jsonc` 中的 `NEWS_KV`）已创建好；若部署到其他 Cloudflare 账号，请用 `npx wrangler kv namespace create NEWS_KV` 新建并替换其中的 `id`。部署完成后会输出 `https://world-dashboard.<你的子域>.workers.dev`。
 
 **方式二：Git 自动部署（Workers Builds）**  
 Cloudflare Dashboard → Workers & Pages → Create → Import a repository，选择本仓库；构建命令留空，部署命令 `npx wrangler deploy`。之后每次推送都会自动发布。

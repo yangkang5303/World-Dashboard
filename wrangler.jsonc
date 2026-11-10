@@ -11,8 +11,8 @@
     "run_worker_first": ["/api/*", "/health"]
   },
   "observability": { "enabled": true },
-  // Globally shared cache tier. Wrangler creates the namespace on first deploy.
-  "kv_namespaces": [{ "binding": "NEWS_KV" }],
+  // Globally shared cache tier (namespace "world-dashboard-news-cache").
+  "kv_namespaces": [{ "binding": "NEWS_KV", "id": "458324aeb19d4ca38ab1537a4301cbad" }],
   // Refresh the global feed in the background so visitors never wait on GDELT.
   "triggers": { "crons": ["*/10 * * * *"] },
   "vars": {
