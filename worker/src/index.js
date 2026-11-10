@@ -1,18 +1,15 @@
 // World Dashboard — Cloudflare Worker.
 // Serves the JSON API under /api/* and hands everything else to static assets.
+//
+// News comes from GDELT's per-minute web feed (see webfeed.js). A cron run
+// ingests it into KV; requests only read KV, through an in-memory/edge cache.
 import { SwrCache } from "./cache.js";
-import { resolveCountry, sourceCountryClause } from "./countries.js";
-import { fetchArticles, formatArticles, GdeltError } from "./gdelt.js";
+import { resolveCountry } from "./countries.js";
+import { DEFAULT_FEED_URL, FEED_KEYS, FeedError, GLOBAL_SIZE, ingest } from "./webfeed.js";
 
-const DEFAULT_GLOBAL_QUERY =
-  "(theme:ARMEDCONFLICT OR theme:POLITICS OR theme:SECURITY " +
-  "OR theme:ECONOMY OR theme:GOVERNMENT OR theme:TERROR)";
-
-// Always ask GDELT for the same page size and slice per request, so that
-// ?max_records=20 and ?max_records=50 share one cache entry.
-const UPSTREAM_RECORDS = 100;
-const MAX_QUERY_LENGTH = 400;
-const TIMESPAN_PATTERN = /^\d{1,4}(min|h|d|w|m)$/i;
+const MAX_RECORDS = GLOBAL_SIZE;
+const TIMESPAN_PATTERN = /^(\d{1,4})(min|h|d|w)$/i;
+const UNIT_MS = { min: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 };
 
 // One cache per isolate; it outlives individual requests.
 const cache = new SwrCache();
@@ -30,12 +27,11 @@ function readConfig(env) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   };
+  const window = parseSpan((env.FEED_WINDOW || "1d").trim()) ?? UNIT_MS.d;
   return {
-    globalQuery: (env.GDELT_GLOBAL_QUERY || DEFAULT_GLOBAL_QUERY).trim(),
-    timespan: (env.GDELT_TIMESPAN || "1d").trim(),
-    translation: env.GDELT_TRANSLATION ?? "googtrans",
-    docUrl: env.GDELT_DOC_URL || undefined,
-    ttlMs: seconds(env.CACHE_TTL_SECONDS, 600) * 1000,
+    feedUrl: (env.GDELT_FEED_URL || DEFAULT_FEED_URL).replace(/\/+$/, ""),
+    windowMs: window,
+    ttlMs: seconds(env.CACHE_TTL_SECONDS, 60) * 1000,
     staleMs: seconds(env.CACHE_STALE_SECONDS, 86_400) * 1000,
     corsOrigins: String(env.CORS_ALLOW_ORIGINS || "*")
       .split(",")
@@ -44,59 +40,52 @@ function readConfig(env) {
   };
 }
 
+function parseSpan(value) {
+  const match = TIMESPAN_PATTERN.exec(value);
+  return match ? Number(match[1]) * UNIT_MS[match[2].toLowerCase()] : null;
+}
+
 function parseMaxRecords(url, fallback) {
   const raw = url.searchParams.get("max_records");
   if (raw === null) return fallback;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > UPSTREAM_RECORDS) {
-    throw new HttpError(400, `max_records must be an integer between 1 and ${UPSTREAM_RECORDS}`);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_RECORDS) {
+    throw new HttpError(400, `max_records must be an integer between 1 and ${MAX_RECORDS}`);
   }
   return value;
 }
 
-function parseTimespan(url, fallback) {
-  const raw = (url.searchParams.get("timespan") || fallback).trim();
-  if (!TIMESPAN_PATTERN.test(raw)) {
-    throw new HttpError(400, "timespan must look like 12h, 1d or 2w");
-  }
-  return raw.toLowerCase();
+/** Optional ?timespan= narrows the stored window; it can never widen it. */
+function parseTimespan(url) {
+  const raw = url.searchParams.get("timespan");
+  if (raw === null) return null;
+  const span = parseSpan(raw.trim());
+  if (!span) throw new HttpError(400, "timespan must look like 30min, 12h, 1d or 1w");
+  return span;
 }
 
-const parenthesised = (query) => (query.startsWith("(") && query.endsWith(")") ? query : `(${query})`);
-
-async function loadGlobal(config, query, timespan, deps) {
-  const raw = await fetchArticles(config, { query, timespan, maxRecords: UPSTREAM_RECORDS }, deps);
-  return { query, articles: formatArticles(raw) };
+// Concurrent cache misses on an empty store share one ingest run.
+let ingesting = null;
+function ingestOnce(config, env, deps) {
+  ingesting ||= ingest({ kv: env.NEWS_KV, baseUrl: config.feedUrl, windowMs: config.windowMs, ...deps }).finally(
+    () => (ingesting = null),
+  );
+  return ingesting;
 }
 
-async function loadCountry(config, country, timespan, deps) {
-  const clause = sourceCountryClause(country);
-  // Prefer the curated topics; fall back to everything published in the country.
-  const candidates = config.globalQuery ? [`${clause} AND ${parenthesised(config.globalQuery)}`, clause] : [clause];
-
-  let lastError;
-  let answered = false;
-  let query = candidates[0];
-  for (const candidate of candidates) {
-    try {
-      const raw = await fetchArticles(config, { query: candidate, timespan, maxRecords: UPSTREAM_RECORDS }, deps);
-      answered = true;
-      query = candidate;
-      const articles = formatArticles(raw);
-      if (articles.length) return { query, articles };
-    } catch (error) {
-      // A rejected query (e.g. "too common") may still work in its simpler
-      // form; an outage or rate limit will not, so stop hammering.
-      if (!(error instanceof GdeltError) || error.kind !== "query") throw error;
-      lastError = error;
-    }
-  }
-  if (!answered && lastError) throw lastError;
-  return { query, articles: [] };
+/** Read one feed document from KV; an empty store is filled on the spot. */
+async function loadDoc(which, config, env, deps) {
+  if (!env.NEWS_KV) throw new HttpError(500, "NEWS_KV binding is not configured");
+  const stored = await env.NEWS_KV.get(FEED_KEYS[which], "json");
+  if (stored) return stored;
+  return (await ingestOnce(config, env, deps))[which];
 }
 
-const cachePolicy = (config, env) => ({ ttlMs: config.ttlMs, staleMs: config.staleMs, kv: env.NEWS_KV ?? null });
-const globalKey = (timespan, query) => `global|${timespan}|${query}`;
+function readDoc(which, config, env, ctx, deps) {
+  // KV is the source of truth, so the cache keeps no KV tier of its own.
+  const policy = { ttlMs: config.ttlMs, staleMs: config.staleMs, kv: null };
+  return cache.get(`${config.feedUrl}|${FEED_KEYS[which]}`, policy, () => loadDoc(which, config, env, deps), ctx);
+}
 
 async function handleApi(request, env, ctx, url, deps) {
   const config = readConfig(env);
@@ -106,22 +95,11 @@ async function handleApi(request, env, ctx, url, deps) {
     return { body: { status: "ok" }, cacheControl: "no-store" };
   }
 
-  const policy = cachePolicy(config, env);
-
   if (path === "/api/global") {
     const maxRecords = parseMaxRecords(url, 20);
-    const timespan = parseTimespan(url, config.timespan);
-    const query = (url.searchParams.get("query") || config.globalQuery).trim();
-    if (!query || query.length > MAX_QUERY_LENGTH) {
-      throw new HttpError(400, `query must be between 1 and ${MAX_QUERY_LENGTH} characters`);
-    }
-    const result = await cache.get(
-      globalKey(timespan, query),
-      policy,
-      () => loadGlobal(config, query, timespan, deps),
-      ctx,
-    );
-    return { result, maxRecords };
+    const span = parseTimespan(url);
+    const result = await readDoc("global", config, env, ctx, deps);
+    return { result, articles: result.value.articles, maxRecords, span };
   }
 
   const countryMatch = /^\/api\/country\/([^/]+)$/.exec(path);
@@ -135,14 +113,15 @@ async function handleApi(request, env, ctx, url, deps) {
     const country = resolveCountry(identifier);
     if (!country) throw new HttpError(400, `Unsupported country identifier: ${identifier.slice(0, 80)}`);
     const maxRecords = parseMaxRecords(url, 50);
-    const timespan = parseTimespan(url, config.timespan);
-    const result = await cache.get(
-      `country|${country.iso2}|${timespan}`,
-      policy,
-      () => loadCountry(config, country, timespan, deps),
-      ctx,
-    );
-    return { result, maxRecords, extra: { country: { iso2: country.iso2, name: country.name } } };
+    const span = parseTimespan(url);
+    const result = await readDoc("countries", config, env, ctx, deps);
+    return {
+      result,
+      articles: result.value.countries[country.iso2] || [],
+      maxRecords,
+      span,
+      extra: { country: { iso2: country.iso2, name: country.name } },
+    };
   }
 
   throw new HttpError(404, "Not found");
@@ -168,13 +147,8 @@ function errorResponse(error, cors) {
   if (error instanceof HttpError) {
     return json({ detail: error.detail }, error.status, { ...cors, "cache-control": "no-store" });
   }
-  if (error instanceof GdeltError) {
-    const rateLimited = error.kind === "rate-limit";
-    return json({ detail: `GDELT request failed: ${error.message}` }, rateLimited ? 503 : 502, {
-      ...cors,
-      "cache-control": "no-store",
-      ...(rateLimited ? { "retry-after": "10" } : {}),
-    });
+  if (error instanceof FeedError) {
+    return json({ detail: error.message }, 502, { ...cors, "cache-control": "no-store", "retry-after": "60" });
   }
   console.error("Unhandled error", error);
   return json({ detail: "Internal error" }, 500, { ...cors, "cache-control": "no-store" });
@@ -184,7 +158,7 @@ function errorResponse(error, cors) {
  * @param {Request} request
  * @param {Record<string, any>} env
  * @param {{ waitUntil(promise: Promise<unknown>): void }} ctx
- * @param {{ fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void> }} [deps] test seams
+ * @param {{ fetchImpl?: typeof fetch, now?: () => number }} [deps] test seams
  */
 export async function handleRequest(request, env, ctx, deps) {
   const url = new URL(request.url);
@@ -209,10 +183,12 @@ export async function handleRequest(request, env, ctx, deps) {
       return json(outcome.body, 200, { ...cors, "cache-control": outcome.cacheControl });
     }
 
-    const { result, maxRecords, extra } = outcome;
-    const articles = result.value.articles.slice(0, maxRecords);
-    const { storedAt } = result;
-    const etag = `W/"${storedAt.toString(36)}-${articles.length}"`;
+    const { result, maxRecords, span, extra } = outcome;
+    const now = deps?.now?.() ?? Date.now();
+    const inSpan = span ? outcome.articles.filter((article) => Date.parse(article.time) > now - span) : outcome.articles;
+    const articles = inSpan.slice(0, maxRecords);
+    const updatedAt = result.value.updated_at;
+    const etag = `W/"${Date.parse(updatedAt).toString(36)}-${articles.length}"`;
     const headers = {
       ...cors,
       etag,
@@ -227,39 +203,21 @@ export async function handleRequest(request, env, ctx, deps) {
     if (request.headers.get("if-none-match") === etag) {
       return new Response(null, { status: 304, headers });
     }
-    return json(
-      {
-        query: result.value.query,
-        ...extra,
-        count: articles.length,
-        updated_at: new Date(storedAt).toISOString(),
-        articles,
-      },
-      200,
-      headers,
-    );
+    return json({ ...extra, count: articles.length, updated_at: updatedAt, articles }, 200, headers);
   } catch (error) {
     return errorResponse(error, cors);
   }
 }
 
-/**
- * Cron pre-warm: refresh the default global feed so that visitors are served
- * from cache and never have to wait on (or get rate limited by) GDELT.
- */
+/** Cron: pull newly published feed files into KV. */
 export async function handleScheduled(env, ctx, deps) {
   const config = readConfig(env);
-  const timespan = config.timespan.toLowerCase();
   try {
-    await cache.refresh(
-      globalKey(timespan, config.globalQuery),
-      cachePolicy(config, env),
-      () => loadGlobal(config, config.globalQuery, timespan, deps),
-      ctx,
-    );
+    const { files, global } = await ingestOnce(config, env, deps);
+    console.log(`Feed ingest: ${files} file(s), cursor ${global.cursor}, ${global.articles.length} global articles`);
   } catch (error) {
-    // Visitors keep getting the previous copy; the next run tries again.
-    console.warn("Scheduled refresh failed:", error?.message || error);
+    // Visitors keep getting the previous copy; the next run resumes from the cursor.
+    console.warn("Feed ingest failed:", error?.message || error);
   }
 }
 

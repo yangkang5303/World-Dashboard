@@ -1,10 +1,10 @@
 // Country identity handling.
 //
-// The public API speaks ISO 3166-1 alpha-2 only. GDELT speaks FIPS 10-4, and the
-// two code sets collide badly (FIPS "CH" is China but ISO "CH" is Switzerland;
-// FIPS "GB" is Gabon but ISO "GB" is the United Kingdom; ...). FIPS codes are
-// therefore never accepted from clients — they are only produced here, right
-// before a query is sent upstream.
+// The public API speaks ISO 3166-1 alpha-2 only. GDELT's older APIs speak
+// FIPS 10-4, and the two code sets collide badly (FIPS "CH" is China but ISO
+// "CH" is Switzerland; FIPS "GB" is Gabon but ISO "GB" is the United Kingdom;
+// ...), so FIPS codes are never accepted from clients. The FIPS column in
+// country-data.js is kept for reference only.
 import { COUNTRY_ROWS } from "./country-data.js";
 
 /** @typedef {{ iso2: string, iso3: string, fips: string[], name: string }} Country */
@@ -54,21 +54,4 @@ export function resolveCountry(value) {
   if (upper.length === 2 && BY_ISO2.has(upper)) return BY_ISO2.get(upper);
   if (upper.length === 3 && BY_ISO3.has(upper)) return BY_ISO3.get(upper);
   return BY_NAME.get(normalizeName(text)) ?? null;
-}
-
-/**
- * Resolve the `sourcecountry` field of a GDELT article, which is a country
- * name in GDELT's own spelling ("United States", "South Korea", ...).
- * @param {unknown} value
- * @returns {Country | null}
- */
-export function resolveGdeltCountryName(value) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  return BY_NAME.get(normalizeName(value)) ?? null;
-}
-
-/** GDELT `sourcecountry:` clause for a country (some have two FIPS codes). */
-export function sourceCountryClause(country) {
-  const parts = country.fips.map((code) => `sourcecountry:${code}`);
-  return parts.length === 1 ? parts[0] : `(${parts.join(" OR ")})`;
 }
