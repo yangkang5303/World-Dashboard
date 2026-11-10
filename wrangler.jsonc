@@ -11,17 +11,18 @@
     "run_worker_first": ["/api/*", "/health"]
   },
   "observability": { "enabled": true },
-  // Globally shared cache tier (namespace "world-dashboard-news-cache").
+  // Rolling news store written by the cron run (namespace "world-dashboard-news-cache").
   "kv_namespaces": [{ "binding": "NEWS_KV", "id": "458324aeb19d4ca38ab1537a4301cbad" }],
-  // Refresh the global feed in the background so visitors never wait on GDELT.
-  "triggers": { "crons": ["*/10 * * * *"] },
+  // Pull newly published GDELT feed files into KV; visitors only read KV.
+  // Each run writes KV once or twice — well inside the free plan's 1000/day.
+  "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
-    // How long a GDELT answer counts as fresh, and how long a stale copy may
-    // still be served while refreshing in the background / during outages.
-    "CACHE_TTL_SECONDS": "900",
+    // How much news the store keeps.
+    "FEED_WINDOW": "1d",
+    // How long an isolate reuses what it read from KV, and how long a stale
+    // copy may still be served while re-reading in the background.
+    "CACHE_TTL_SECONDS": "60",
     "CACHE_STALE_SECONDS": "86400",
-    "GDELT_TIMESPAN": "1d",
-    "GDELT_TRANSLATION": "googtrans",
     "CORS_ALLOW_ORIGINS": "*"
   }
 }
