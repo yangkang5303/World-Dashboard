@@ -6,8 +6,10 @@
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-     <!-- 部署静态前端到独立域名时，可在此 meta 中填入后端 API 根路径 -->
-    <meta name="backend-base-url" content="https://world-dashboard-mo7f.vercel.app" />
+    <!-- 默认与页面同源（Cloudflare Worker 同时提供页面与 /api）。仅当 API 部署在其他域名时才需填写 -->
+    <meta name="backend-base-url" content="" />
+    <link rel="preload" href="./world.geo.json" as="fetch" type="application/json" crossorigin="anonymous" />
+    <link rel="preconnect" href="https://fastly.jsdelivr.net" crossorigin />
     <style>
       :root {
         color-scheme: dark;
@@ -99,6 +101,46 @@
         margin: 0;
         font-size: 1.2rem;
         letter-spacing: 0.05em;
+      }
+      #panel-status {
+        min-height: 1.2em;
+        font-size: 0.8rem;
+      }
+      #back-global {
+        align-self: flex-start;
+        margin-top: 4px;
+        padding: 4px 12px;
+        font-size: 0.8rem;
+        color: var(--accent);
+        background: rgba(76, 201, 240, 0.12);
+        border: 1px solid rgba(76, 201, 240, 0.4);
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      #back-global:hover {
+        background: rgba(76, 201, 240, 0.25);
+      }
+      #news-list.loading {
+        opacity: 0.45;
+        transition: opacity 0.15s ease;
+      }
+      #news-list li.notice {
+        color: var(--text-soft);
+        font-size: 0.9rem;
+      }
+      #news-list li.notice button {
+        margin-left: 8px;
+        color: var(--accent);
+        background: none;
+        border: none;
+        font: inherit;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+      .summary {
+        margin: 8px 0 0;
+        color: var(--text-soft);
+        font-size: 0.85rem;
       }
 
       #news-list {
@@ -211,6 +253,8 @@
       <aside id="news-panel">
         <header>
           <h2 id="panel-title">全球热点 · Past 24 Hours</h2>
+          <p id="panel-status" aria-live="polite"></p>
+          <button id="back-global" class="hidden" type="button">← 返回全球热点</button>
         </header>
         <ul id="news-list"></ul>
       </aside>
@@ -218,732 +262,79 @@
 
     <script src="https://fastly.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script>
-      const BACKEND_BASE_URL =
+      // API 根路径：默认同源。可用 window.BACKEND_BASE_URL 或 <meta name="backend-base-url"> 覆盖。
+      const API_BASE = (
         window.BACKEND_BASE_URL ||
-        (document.querySelector('meta[name="backend-base-url"]')?.getAttribute("content") || "").trim() ||
-        (window.location.origin.includes(":") ? "http://localhost:8000" : window.location.origin);
+        (document.querySelector('meta[name="backend-base-url"]')?.getAttribute("content") || "").trim()
+      ).replace(/\/+$/, "");
 
-      const COUNTRY_FIPS_MAP = {
-        AF: "Afghanistan",
-        AX: "Akrotiri Sovereign Base Area",
-        AL: "Albania",
-        AG: "Algeria",
-        AQ: "American Samoa",
-        AN: "Andorra",
-        AO: "Angola",
-        AV: "Anguilla",
-        AY: "Antarctica",
-        AC: "Antigua and Barbuda",
-        AR: "Argentina",
-        AM: "Armenia",
-        AA: "Aruba",
-        AT: "Ashmore and Cartier Islands",
-        AS: "Australia",
-        AU: "Austria",
-        AJ: "Azerbaijan",
-        BF: "Bahamas, The",
-        BA: "Bahrain",
-        FQ: "Baker Island",
-        BG: "Bangladesh",
-        BB: "Barbados",
-        BS: "Bassas da India",
-        BO: "Belarus",
-        BE: "Belgium",
-        BH: "Belize",
-        BN: "Benin",
-        BD: "Bermuda",
-        BT: "Bhutan",
-        BL: "Bolivia",
-        BK: "Bosnia-Herzegovina",
-        BC: "Botswana",
-        BV: "Bouvet Island",
-        BR: "Brazil",
-        IO: "British Indian Ocean Territory",
-        VI: "British Virgin Islands",
-        BX: "Brunei",
-        BU: "Bulgaria",
-        UV: "Burkina Faso",
-        BY: "Burundi",
-        CB: "Cambodia",
-        CM: "Cameroon",
-        CA: "Canada",
-        CV: "Cape Verde",
-        CJ: "Cayman Islands",
-        CT: "Central African Republic",
-        CD: "Chad",
-        CI: "Chile",
-        CH: "China",
-        KT: "Christmas Island",
-        IP: "Clipperton Island",
-        CK: "Cocos Keeling Islands",
-        CO: "Colombia",
-        CN: "Comoros",
-        CF: "Congo",
-        CW: "Cook Islands",
-        CR: "Coral Sea Islands",
-        CS: "Costa Rica",
-        IV: "Cote dIvoire",
-        HR: "Croatia",
-        CU: "Cuba",
-        CY: "Cyprus",
-        EZ: "Czech Republic",
-        LO: "Slovakia",
-        CG: "Democratic Republic of the Congo",
-        DA: "Denmark",
-        DX: "Dhekelia Sovereign Base Area",
-        DJ: "Djibouti",
-        DO: "Dominica",
-        DR: "Dominican Republic",
-        TT: "East Timor",
-        EC: "Ecuador",
-        EG: "Egypt",
-        ES: "El Salvador",
-        GV: "Equatorial Guinea",
-        EK: "Equatorial Guinea",
-        ER: "Eritrea",
-        EN: "Estonia",
-        ET: "Ethiopia",
-        PJ: "Etorofu, Habomai, Kunashiri and Shikotan Islands",
-        EU: "Europa Island",
-        FK: "Falkland Islands Islas Malvinas",
-        FO: "Faroe Islands",
-        FJ: "Fiji",
-        FI: "Finland",
-        FR: "France",
-        FG: "French Guiana",
-        FP: "French Polynesia",
-        FS: "French Southern and Antarctic Lands",
-        GB: "Gabon",
-        GA: "Gambia",
-        GZ: "Gaza Strip",
-        GG: "Georgia",
-        GM: "Germany",
-        GH: "Ghana",
-        GI: "Gibraltar",
-        GO: "Glorioso Islands",
-        GR: "Greece",
-        GL: "Greenland",
-        GJ: "Grenada",
-        GP: "Guadeloupe",
-        GQ: "Guam",
-        GT: "Guatemala",
-        GK: "Guernsey",
-        PU: "Guinea-Bissau",
-        GY: "Guyana",
-        HA: "Haiti",
-        HM: "Heard Island and McDonald Islands",
-        HO: "Honduras",
-        HK: "Hong Kong",
-        HQ: "Howland Island",
-        HU: "Hungary",
-        IC: "Iceland",
-        IN: "India",
-        ID: "Indonesia",
-        IR: "Iran",
-        IZ: "Iraq",
-        EI: "Ireland",
-        IM: "Isle of Man",
-        IS: "Israel",
-        IT: "Italy",
-        JM: "Jamaica",
-        JN: "Jan Mayen",
-        JA: "Japan",
-        DQ: "Jarvis Island",
-        JE: "Jersey",
-        JQ: "Johnston Atoll",
-        JO: "Jordan",
-        JU: "Juan de Nova Island",
-        KZ: "Kazakhstan",
-        KE: "Kenya",
-        KQ: "Kingman Reef",
-        KR: "Kiribati",
-        KV: "Kosovo",
-        KU: "Kuwait",
-        KG: "Kyrgyzstan",
-        LA: "Laos",
-        LG: "Latvia",
-        LE: "Lebanon",
-        LT: "Lesotho",
-        LI: "Liberia",
-        LY: "Libya",
-        LS: "Liechtenstein",
-        LH: "Lithuania",
-        LU: "Luxembourg",
-        MC: "Macau",
-        MK: "Macedonia",
-        MA: "Madagascar",
-        MI: "Malawi",
-        MY: "Malaysia",
-        MV: "Maldives",
-        ML: "Mali",
-        MT: "Malta",
-        RM: "Marshall Islands",
-        MB: "Martinique",
-        MR: "Mauritania",
-        MP: "Mauritius",
-        MF: "Mayotte",
-        MX: "Mexico",
-        FM: "Micronesia",
-        MQ: "Midway Islands",
-        MD: "Moldova",
-        MN: "Monaco",
-        MG: "Mongolia",
-        MJ: "Montenegro",
-        MH: "Montserrat",
-        MO: "Morocco",
-        MZ: "Mozambique",
-        BM: "Myanmar",
-        WA: "Namibia",
-        NR: "Nauru",
-        BQ: "Navassa Island",
-        NP: "Nepal",
-        NL: "Netherlands",
-        NT: "Netherlands Antilles",
-        NC: "New Caledonia",
-        NZ: "New Zealand",
-        NU: "Nicaragua",
-        NG: "Niger",
-        NI: "Nigeria",
-        NE: "Niue",
-        NM: "No Mans Land",
-        NF: "Norfolk Island",
-        KN: "North Korea",
-        CQ: "Northern Mariana Islands",
-        NO: "Norway",
-        OS: "Oceans",
-        MU: "Oman",
-        PK: "Pakistan",
-        PS: "Palau",
-        LQ: "Palmyra Atoll",
-        PM: "Panama",
-        PP: "Papua New Guinea",
-        PF: "Paracel Islands",
-        PA: "Paraguay",
-        PE: "Peru",
-        RP: "Philippines",
-        PC: "Pitcairn Islands",
-        PL: "Poland",
-        PO: "Portugal",
-        RQ: "Puerto Rico",
-        QA: "Qatar",
-        RE: "Reunion",
-        RO: "Romania",
-        RS: "Russia",
-        RW: "Rwanda",
-        SH: "Saint Helena",
-        SC: "Saint Kitts and Nevis",
-        ST: "Saint Lucia",
-        RN: "Saint Martin",
-        SB: "Saint Pierre and Miquelon",
-        VC: "Saint Vincent and the Grenadines",
-        TB: "Saint-Barthelemy Island",
-        WS: "Samoa",
-        SM: "San Marino",
-        TP: "Sao Tome and Principe",
-        SA: "Saudi Arabia",
-        SG: "Senegal",
-        RI: "Serbia",
-        SE: "Seychelles",
-        SL: "Sierra Leone",
-        SN: "Singapore",
-        SI: "Slovenia",
-        BP: "Solomon Islands",
-        SO: "Somalia",
-        SF: "South Africa",
-        SX: "South Georgia and the South Sandwich Islands",
-        KS: "South Korea",
-        OD: "South Sudan",
-        SP: "Spain",
-        PG: "Spratly Islands",
-        CE: "Sri Lanka",
-        SU: "Sudan",
-        NS: "Suriname",
-        SV: "Svalbard",
-        WZ: "Swaziland",
-        SW: "Sweden",
-        SZ: "Switzerland",
-        SY: "Syria",
-        TW: "Taiwan",
-        TI: "Tajikistan",
-        TZ: "Tanzania",
-        TH: "Thailand",
-        TO: "Togo",
-        TL: "Tokelau",
-        TN: "Tonga",
-        TD: "Trinidad and Tobago",
-        TE: "Tromelin Island",
-        TS: "Tunisia",
-        TU: "Turkey",
-        TX: "Turkmenistan",
-        TK: "Turks and Caicos Islands",
-        TV: "Tuvalu",
-        UG: "Uganda",
-        UP: "Ukraine",
-        UF: "Undersea Features",
-        UU: "Undesignated Sovereignty",
-        AE: "United Arab Emirates",
-        UK: "United Kingdom",
-        US: "United States",
-        UY: "Uruguay",
-        UZ: "Uzbekistan",
-        NH: "Vanuatu",
-        VT: "Vatican City",
-        VE: "Venezuela",
-        VM: "Vietnam, Democratic Republic of",
-        VQ: "Virgin Islands",
-        WQ: "Wake Island",
-        WF: "Wallis and Futuna",
-        WE: "West Bank",
-        WI: "Western Sahara",
-        YM: "Yemen",
-        ZA: "Zambia",
-        ZI: "Zimbabwe",
-      };
-
-      const ISO_TO_FIPS = {
-        AD: "AN",
-        AE: "AE",
-        AF: "AF",
-        AG: "AC",
-        AI: "AV",
-        AL: "AL",
-        AM: "AM",
-        AO: "AO",
-        AQ: "AY",
-        AR: "AR",
-        AS: "AQ",
-        AT: "AU",
-        AU: "AS",
-        AW: "AA",
-        AZ: "AJ",
-        BB: "BB",
-        BD: "BG",
-        BE: "BE",
-        BF: "UV",
-        BG: "BU",
-        BH: "BA",
-        BI: "BY",
-        BJ: "BN",
-        BM: "BD",
-        BO: "BL",
-        BR: "BR",
-        BS: "BF",
-        BT: "BT",
-        BV: "BV",
-        BW: "BC",
-        BY: "BO",
-        BZ: "BH",
-        CA: "CA",
-        CF: "CT",
-        CG: "CF",
-        SZ: "SZ",
-        CK: "CW",
-        CL: "CI",
-        CM: "CM",
-        CH: "CN",
-        CO: "CO",
-        CR: "CS",
-        CU: "CU",
-        CX: "KT",
-        CY: "CY",
-        CZ: "EZ",
-        DE: "GM",
-        DJ: "DJ",
-        DK: "DA",
-        DM: "DO",
-        DO: "DR",
-        DZ: "AG",
-        EC: "EC",
-        EE: "EN",
-        EG: "EG",
-        EH: "WI",
-        ER: "ER",
-        ES: "SP",
-        ET: "ET",
-        FI: "FI",
-        FJ: "FJ",
-        FM: "FM",
-        FO: "FO",
-        FR: "FR",
-        GA: "GB",
-        GB: "UK",
-        GD: "GJ",
-        GE: "GG",
-        GF: "FG",
-        GG: "GK",
-        GH: "GH",
-        GI: "GI",
-        GL: "GL",
-        GM: "GA",
-        GP: "GP",
-        GQ: "EK",
-        GR: "GR",
-        GS: "SX",
-        GT: "GT",
-        GU: "GQ",
-        GW: "PU",
-        GY: "GY",
-        HK: "HK",
-        HM: "HM",
-        HN: "HO",
-        HR: "HR",
-        HT: "HA",
-        HU: "HU",
-        ID: "ID",
-        IE: "EI",
-        IL: "IS",
-        IM: "IM",
-        IN: "IN",
-        IO: "IO",
-        IQ: "IZ",
-        IR: "IR",
-        IS: "IC",
-        IT: "IT",
-        JE: "JE",
-        JM: "JM",
-        JO: "JO",
-        JP: "JA",
-        KE: "KE",
-        KG: "KG",
-        KH: "CB",
-        KI: "KR",
-        KM: "CN",
-        KN: "SC",
-        KP: "KN",
-        KR: "KS",
-        KW: "KU",
-        KY: "CJ",
-        KZ: "KZ",
-        LA: "LA",
-        LB: "LE",
-        LC: "ST",
-        LI: "LS",
-        LK: "CE",
-        LR: "LI",
-        LS: "LT",
-        LT: "LH",
-        LU: "LU",
-        LV: "LG",
-        LY: "LY",
-        MA: "MO",
-        MC: "MN",
-        MD: "MD",
-        ME: "MJ",
-        MG: "MA",
-        MH: "RM",
-        MK: "MK",
-        ML: "ML",
-        MM: "BM",
-        MN: "MG",
-        MP: "CQ",
-        MQ: "MB",
-        MR: "MR",
-        MS: "MH",
-        MT: "MT",
-        MU: "MP",
-        MV: "MV",
-        MW: "MI",
-        MX: "MX",
-        MY: "MY",
-        MZ: "MZ",
-        NA: "WA",
-        NC: "NC",
-        NE: "NG",
-        NF: "NF",
-        NG: "NI",
-        NI: "NU",
-        NL: "NL",
-        NO: "NO",
-        NP: "NP",
-        NR: "NR",
-        NU: "NE",
-        NZ: "NZ",
-        OM: "MU",
-        PA: "PM",
-        PE: "PE",
-        PF: "FP",
-        PG: "PP",
-        PH: "RP",
-        PK: "PK",
-        PL: "PL",
-        PM: "SB",
-        PR: "RQ",
-        PS: "GZ",
-        PT: "PO",
-        PW: "PS",
-        PY: "PA",
-        QA: "QA",
-        RO: "RO",
-        RS: "RI",
-        RU: "RS",
-        RW: "RW",
-        SA: "SA",
-        SB: "BP",
-        SC: "SE",
-        SD: "SU",
-        SE: "SW",
-        SG: "SN",
-        SI: "SI",
-        SK: "LO",
-        SL: "SL",
-        SM: "SM",
-        SN: "SG",
-        SO: "SO",
-        SR: "NS",
-        SS: "OD",
-        ST: "TP",
-        SV: "ES",
-        SY: "SY",
-        SZ: "WZ",
-        TC: "TK",
-        TD: "CD",
-        TG: "TO",
-        TH: "TH",
-        TJ: "TI",
-        TK: "TL",
-        TM: "TX",
-        TN: "TS",
-        TO: "TN",
-        TT: "TD",
-        TV: "TV",
-        TW: "TW",
-        TZ: "TZ",
-        UA: "UP",
-        UG: "UG",
-        US: "US",
-        UY: "UY",
-        UZ: "UZ",
-        VC: "VC",
-        VE: "VE",
-        VG: "VI",
-        VU: "NH",
-        WF: "WF",
-        WS: "WS",
-        YE: "YM",
-        YT: "MF",
-        ZA: "SF",
-        ZM: "ZA",
-        ZW: "ZI",
-      };
-
-      const EXTRA_FIPS_ALIASES = {
-        "usa": "US",
-        "united states": "US",
-        "united states of america": "US",
-        "america": "US",
-        "u s a": "US",
-        "uk": "UK",
-        "united kingdom": "UK",
-        "great britain": "UK",
-        "britain": "UK",
-        "england": "UK",
-        "china": "CH",
-        "people s republic of china": "CH",
-        "mainland china": "CH",
-        "russia": "RS",
-        "russian federation": "RS",
-        "south korea": "KS",
-        "korea republic of": "KS",
-        "republic of korea": "KS",
-        "north korea": "KN",
-        "democratic people s republic of korea": "KN",
-        "dprk": "KN",
-        "cote d ivoire": "IV",
-        "cote divoire": "IV",
-        "ivory coast": "IV",
-        "democratic republic of the congo": "CG",
-        "republic of the congo": "CF",
-        "congo kinshasa": "CG",
-        "congo brazzaville": "CF",
-        "hong kong": "HK",
-        "macau": "MC",
-        "macao": "MC",
-        "palestine": "WE",
-        "state of palestine": "WE",
-        "gaza strip": "GZ",
-        "west bank": "WE",
-        "vatican city": "VT",
-        "holy see": "VT",
-        "laos": "LA",
-        "myanmar": "BM",
-        "burma": "BM",
-        "tanzania": "TZ",
-        "czech republic": "EZ",
-        "czechia": "EZ",
-        "slovakia": "LO",
-        "eswatini": "WZ",
-        "swaziland": "WZ",
-        "cape verde": "CV",
-        "sao tome and principe": "TP",
-        "timor leste": "TT",
-        "taiwan": "TW",
-        "viet nam": "VM",
-        "vietnam": "VM",
-        "south sudan": "OD",
-        "micronesia": "FM",
-        "federated states of micronesia": "FM",
-        "saint barthelemy": "TB",
-        "saint barts": "TB",
-        "saint barthélemy": "TB",
-        "saint martin": "RN",
-        "réunion": "RE",
-        "reunion": "RE",
-        "curaçao": "NT",
-        "curacao": "NT"
-      };
-
-      function normalizeCountryKey(name) {
-        return name
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase()
-          .replace(/&/g, " and ")
-          .replace(/['’]/g, "")
-          .replace(/[^a-z0-9]+/g, " ")
-          .trim();
-      }
-
-      const COUNTRY_CODE_BY_NAME = new Map();
-      Object.entries(COUNTRY_FIPS_MAP).forEach(([code, label]) => {
-        if (typeof label !== "string" || !label.trim()) return;
-        const normalized = normalizeCountryKey(label);
-        if (normalized && !COUNTRY_CODE_BY_NAME.has(normalized)) {
-          COUNTRY_CODE_BY_NAME.set(normalized, code);
-        }
-        if (label.includes(",")) {
-          const alt = normalizeCountryKey(label.replace(/,/g, " "));
-          if (alt && !COUNTRY_CODE_BY_NAME.has(alt)) {
-            COUNTRY_CODE_BY_NAME.set(alt, code);
-          }
-        }
-      });
-
-      Object.entries(EXTRA_FIPS_ALIASES).forEach(([alias, code]) => {
-        const normalized = normalizeCountryKey(alias);
-        if (normalized) {
-          COUNTRY_CODE_BY_NAME.set(normalized, code);
-        }
-      });
-
-      Object.keys(COUNTRY_FIPS_MAP).forEach((code) => {
-        COUNTRY_CODE_BY_NAME.set(code.toLowerCase(), code);
-      });
-
-      const COUNTRY_CODE_LOOKUP = new Map();
+      const GLOBAL_PATH = "/api/global?max_records=50";
+      const GLOBAL_SNAPSHOT_KEY = "wd:global:v1";
+      const CLIENT_TTL_MS = 5 * 60 * 1000; // 内存缓存：重复点击同一国家不再发请求
+      const REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 与服务端缓存 TTL 一致
+      const REQUEST_TIMEOUT_MS = 30 * 1000;
 
       const DEFAULT_MAP_SOURCES = [
         "./world.geo.json",
         "https://fastly.jsdelivr.net/npm/echarts@5/examples/data/asset/world.geo.json",
         "https://cdn.jsdelivr.net/npm/echarts@5/examples/data/asset/world.geo.json",
-        "https://fastly.jsdelivr.net/npm/echarts@5/map/json/world.json",
-        "https://cdn.jsdelivr.net/npm/echarts@5/map/json/world.json",
-        "https://geo.datav.aliyun.com/geojson/world.json"
       ];
-      const MAP_SOURCES = Array.isArray(window.WORLD_MAP_SOURCES) && window.WORLD_MAP_SOURCES.length
-        ? window.WORLD_MAP_SOURCES
-        : DEFAULT_MAP_SOURCES;
+      const MAP_SOURCES =
+        Array.isArray(window.WORLD_MAP_SOURCES) && window.WORLD_MAP_SOURCES.length
+          ? window.WORLD_MAP_SOURCES
+          : DEFAULT_MAP_SOURCES;
 
       const mapEl = document.getElementById("map");
       const chart = echarts.init(mapEl, null, { renderer: "canvas" });
       const toggleMapBtn = document.getElementById("toggle-map");
       const newsPanel = document.getElementById("news-panel");
+      const newsList = document.getElementById("news-list");
+      const panelTitle = document.getElementById("panel-title");
+      const panelStatus = document.getElementById("panel-status");
+      const backGlobalBtn = document.getElementById("back-global");
       let mapVisible = true;
       let autoCollapsed = false;
 
-      function registerCountryLookup(geoJson) {
+      // ---- 国家索引 -------------------------------------------------------
+      // 全程只使用 ISO 3166-1 alpha-2。代码直接取自地图数据本身，
+      // 因此地图上的国家名与发送给后端的代码永远一一对应。
+      const countryByMapName = new Map(); // 地图名称 -> { iso2, name, lon, lat }
+      const countryByIso = new Map(); // ISO2 -> 同上
+      let mapReady = false;
+
+      function registerCountries(geoJson) {
         if (!geoJson || !Array.isArray(geoJson.features)) return;
         geoJson.features.forEach((feature) => {
           const props = feature?.properties || {};
-          const isoCandidates = [
-            props.iso_a2,
-            props.iso_a2_eh,
-            props.iso_a3,
-            props.iso_a3_eh,
-            props.adm0_a3,
-            props.adm0_iso,
-            props.wb_a2,
-            props.wb_a3,
-          ]
-            .map((value) => (typeof value === "string" ? value.trim().toUpperCase() : ""))
-            .filter((value) => value && value.length === 2 && value !== "-99");
-
-          const nameCandidates = [
-            props.name,
-            props.name_long,
-            props.admin,
-            props.geounit,
-            props.sovereignt,
-            props.brk_name,
-            props.name_sort,
-            props.name_en,
-            props.name_ciawf,
-          ];
-
-          let resolvedCode = null;
-          for (const candidate of nameCandidates) {
-            const normalized = typeof candidate === "string" ? normalizeCountryKey(candidate) : "";
-            if (!normalized) continue;
-            const code = COUNTRY_CODE_BY_NAME.get(normalized);
-            if (code) {
-              resolvedCode = code;
-              break;
-            }
-          }
-
-          if (!resolvedCode) {
-            for (const isoCandidate of isoCandidates) {
-              if (COUNTRY_FIPS_MAP[isoCandidate]) {
-                resolvedCode = isoCandidate;
-                break;
-              }
-              const mapped = ISO_TO_FIPS[isoCandidate];
-              if (mapped && COUNTRY_FIPS_MAP[mapped]) {
-                resolvedCode = mapped;
-                break;
-              }
-            }
-          }
-
-          if (!resolvedCode) return;
-
-          isoCandidates.forEach((code) => {
-            const normalizedIso = normalizeCountryKey(code);
-            if (normalizedIso && !COUNTRY_CODE_LOOKUP.has(normalizedIso)) {
-              COUNTRY_CODE_LOOKUP.set(normalizedIso, resolvedCode);
-            }
-          });
-
-          nameCandidates
-            .filter((name) => typeof name === "string" && name.trim())
-            .forEach((name) => {
-              const normalized = normalizeCountryKey(name);
-              if (normalized && !COUNTRY_CODE_LOOKUP.has(normalized)) {
-                COUNTRY_CODE_LOOKUP.set(normalized, resolvedCode);
-              }
-            });
-
-          COUNTRY_CODE_LOOKUP.set(resolvedCode.toLowerCase(), resolvedCode);
+          const name = typeof props.name === "string" ? props.name.trim() : "";
+          if (!name) return;
+          const iso2 =
+            [props.iso_a2_eh, props.iso_a2]
+              .map((value) => (typeof value === "string" ? value.trim().toUpperCase() : ""))
+              .find((value) => /^[A-Z]{2}$/.test(value)) || null;
+          const lon = Number(props.label_x);
+          const lat = Number(props.label_y);
+          const entry = {
+            iso2,
+            name,
+            lon: Number.isFinite(lon) ? lon : null,
+            lat: Number.isFinite(lat) ? lat : null,
+          };
+          if (!countryByMapName.has(name)) countryByMapName.set(name, entry);
+          if (iso2 && !countryByIso.has(iso2)) countryByIso.set(iso2, entry);
         });
-      }
-
-      function findCountryCode(name) {
-        if (!name) return null;
-        const key = normalizeCountryKey(name);
-        return COUNTRY_CODE_LOOKUP.get(key) || COUNTRY_CODE_BY_NAME.get(key) || null;
       }
 
       async function loadWorldJSON() {
         let lastError = null;
         for (const url of MAP_SOURCES) {
           try {
-            const response = await fetch(url, { cache: "force-cache" });
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const geoJson = await response.json();
             echarts.registerMap("world", geoJson);
-            registerCountryLookup(geoJson);
-            console.info("[Map] Loaded world geoJSON from:", url);
+            registerCountries(geoJson);
+            mapReady = true;
             return;
           } catch (error) {
             lastError = error;
@@ -951,6 +342,78 @@
           }
         }
         throw new Error(`无法加载世界地图数据：${lastError?.message || "unknown error"}`);
+      }
+
+      // ---- 数据层：内存缓存 + 请求合并 + 可取消 ------------------------------
+      const responseCache = new Map(); // path -> { data, at }
+      const inflight = new Map(); // path -> Promise
+
+      class ApiError extends Error {
+        constructor(status, detail) {
+          super(detail || `HTTP ${status}`);
+          this.status = status;
+        }
+      }
+
+      async function requestJSON(path) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        try {
+          const res = await fetch(`${API_BASE}${path}`, { signal: controller.signal });
+          if (!res.ok) {
+            let detail = res.statusText;
+            try {
+              detail = (await res.json()).detail || detail;
+            } catch (_) {}
+            throw new ApiError(res.status, detail);
+          }
+          return await res.json();
+        } catch (error) {
+          if (error.name === "AbortError") throw new ApiError(0, "请求超时");
+          throw error;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      // 同一路径的并发调用共享一次网络请求；force 用于后台刷新时跳过内存缓存。
+      function getJSON(path, { force = false } = {}) {
+        const cached = responseCache.get(path);
+        if (!force && cached && Date.now() - cached.at < CLIENT_TTL_MS) {
+          return Promise.resolve(cached.data);
+        }
+        if (inflight.has(path)) return inflight.get(path);
+        const promise = requestJSON(path)
+          .then((data) => {
+            responseCache.set(path, { data, at: Date.now() });
+            return data;
+          })
+          .finally(() => inflight.delete(path));
+        inflight.set(path, promise);
+        return promise;
+      }
+
+      function readSnapshot() {
+        try {
+          const snapshot = JSON.parse(sessionStorage.getItem(GLOBAL_SNAPSHOT_KEY));
+          return snapshot && Array.isArray(snapshot.articles) ? snapshot : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function writeSnapshot(data) {
+        try {
+          sessionStorage.setItem(GLOBAL_SNAPSHOT_KEY, JSON.stringify(data));
+        } catch (_) {}
+      }
+
+      // ---- 渲染 -----------------------------------------------------------
+      function escapeHtml(value) {
+        return String(value).replace(
+          /[&<>"']/g,
+          (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]
+        );
       }
 
       function formatDate(isoString) {
@@ -969,105 +432,40 @@
         return date.toISOString().replace("T", " ").slice(0, 16) + " UTC";
       }
 
-      const MAP_NAME_BY_CODE = {
-        US: "United States of America",
-        UK: "United Kingdom",
-        RS: "Russia",
-        IV: "Côte d'Ivoire",
-        CG: "Democratic Republic of the Congo",
-        CF: "Republic of the Congo",
-        IR: "Iran",
-        KN: "Dem. Rep. Korea",
-        KS: "Korea",
-        LA: "Lao PDR",
-        SY: "Syria",
-        WE: "Palestine",
-        EZ: "Czech Republic",
-        TZ: "Tanzania",
-        VM: "Vietnam",
-        VE: "Venezuela",
-        RN: "Saint Martin",
-        TB: "Saint Barthelemy",
-        TW: "Taiwan",
-        HK: "Hong Kong",
-        MC: "Macao",
-        KV: "Kosovo",
-        OD: "South Sudan",
-      };
-
-      function resolveMapName(code, fallbackName) {
-        if (!code) return fallbackName || "Unknown";
-        const upper = code.toUpperCase();
-        if (MAP_NAME_BY_CODE[upper]) return MAP_NAME_BY_CODE[upper];
-        return fallbackName || upper;
-      }
-
       function buildCountryDatasets(articles) {
-        const scatterMap = new Map();
-        const areaMap = new Map();
-        let maxHeat = 0;
-
+        const heat = new Map(); // ISO2 -> { count, headlines }
         articles.forEach((article) => {
-          const countries = Array.isArray(article.countries) ? article.countries : [];
-          countries.forEach((country) => {
-            const countryCode = country.iso2 ? country.iso2.toUpperCase() : undefined;
-            const key = countryCode || (country.name || Math.random().toString()).toUpperCase();
-            const displayName = resolveMapName(countryCode, country.name || countryCode);
-
-            if (!areaMap.has(key)) {
-              areaMap.set(key, {
-                name: displayName,
-                iso2: countryCode || null,
-                value: 0,
-                headlines: new Set(),
-              });
-            }
-            const areaEntry = areaMap.get(key);
-            areaEntry.value += 1;
-            if (article.title && areaEntry.headlines.size < 3) {
-              areaEntry.headlines.add(article.title);
-            }
-            maxHeat = Math.max(maxHeat, areaEntry.value);
-
-            if (country.lat != null && country.lon != null) {
-              if (!scatterMap.has(key)) {
-                scatterMap.set(key, {
-                  name: displayName,
-                  iso2: countryCode || null,
-                  value: [country.lon, country.lat, 0],
-                  headlines: new Set(),
-                });
-              }
-              const scatterEntry = scatterMap.get(key);
-              scatterEntry.value[2] += 1;
-              if (article.title && scatterEntry.headlines.size < 3) {
-                scatterEntry.headlines.add(article.title);
-              }
-            }
+          (Array.isArray(article.countries) ? article.countries : []).forEach((country) => {
+            const iso2 = country.iso2 ? String(country.iso2).toUpperCase() : null;
+            if (!iso2) return;
+            if (!heat.has(iso2)) heat.set(iso2, { count: 0, headlines: [] });
+            const entry = heat.get(iso2);
+            entry.count += 1;
+            if (article.title && entry.headlines.length < 3) entry.headlines.push(article.title);
           });
         });
 
-        const scatterData = Array.from(scatterMap.values()).map((entry) => ({
-          ...entry,
-          value: [...entry.value],
-          headlines: Array.from(entry.headlines),
-        }));
-
-        const areaData = Array.from(areaMap.values()).map((entry) => ({
-          name: entry.name,
-          iso2: entry.iso2,
-          value: entry.value,
-          headlines: Array.from(entry.headlines),
-        }));
-
-        return {
-          scatterData,
-          areaData,
-          maxHeat,
-        };
+        const areaData = [];
+        const scatterData = [];
+        let maxHeat = 0;
+        heat.forEach((entry, iso2) => {
+          const country = countryByIso.get(iso2);
+          if (!country) return; // 地图上没有该地区（如部分小型领地）
+          maxHeat = Math.max(maxHeat, entry.count);
+          areaData.push({ name: country.name, value: entry.count, headlines: entry.headlines });
+          if (country.lon != null && country.lat != null) {
+            scatterData.push({
+              name: country.name,
+              value: [country.lon, country.lat, entry.count],
+              headlines: entry.headlines,
+            });
+          }
+        });
+        return { scatterData, areaData, maxHeat };
       }
 
       function renderGlobalOption(articles) {
+        if (!mapReady) return;
         const { scatterData, areaData, maxHeat } = buildCountryDatasets(articles);
         const visualMax = Math.max(maxHeat || 1, 5);
 
@@ -1078,25 +476,15 @@
             formatter(params) {
               const data = params.data || {};
               const headlines = (data.headlines || [])
-                .map((headline) => `<div style="margin-top:4px;">· ${headline}</div>`)
+                .map((headline) => `<div style="margin-top:4px;">· ${escapeHtml(headline)}</div>`)
                 .join("");
-
-              if (params.seriesType === "map") {
-                return `
-                  <div style="min-width:180px;">
-                    <strong>${params.name}</strong><br/>
-                    热点新闻数量：${params.value || 0}${headlines}
-                  </div>`;
-              }
-
-              if (params.seriesType === "effectScatter") {
-                return `
-                  <div style="min-width:180px;">
-                    <strong>${params.name}</strong><br/>
-                    热点新闻数量：${(params.value && params.value[2]) || 0}${headlines}
-                  </div>`;
-              }
-              return params.name;
+              const count =
+                params.seriesType === "effectScatter" ? (params.value && params.value[2]) || 0 : params.value || 0;
+              return `
+                <div style="min-width:180px;max-width:320px;white-space:normal;">
+                  <strong>${escapeHtml(params.name)}</strong><br/>
+                  热点新闻数量：${Number(count) || 0}${headlines}
+                </div>`;
             },
           },
           visualMap: {
@@ -1149,6 +537,8 @@
               type: "effectScatter",
               coordinateSystem: "geo",
               zlevel: 2,
+              // 散点只做视觉提示，点击交给下层的国家区域处理
+              silent: true,
               rippleEffect: {
                 period: 8,
                 scale: 4,
@@ -1166,45 +556,157 @@
         });
       }
 
-      function renderNewsList(data, isGlobal = true) {
-        const list = document.getElementById("news-list");
-        list.innerHTML = "";
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text != null) node.textContent = text;
+        return node;
+      }
 
-        data.articles.forEach((article) => {
+      // 所有来自接口的文本都通过 textContent 写入，杜绝 HTML 注入。
+      function renderArticles(articles) {
+        const fragment = document.createDocumentFragment();
+        articles.forEach((article) => {
           const li = document.createElement("li");
-          li.innerHTML = `
-            <h3 class="headline"><a href="${article.url}" target="_blank" rel="noopener">${article.title}</a></h3>
-            <div class="meta">
-              <span>🕒 ${formatDate(article.time)}</span>
-              <span>🌐 ${article.source || "未知来源"}</span>
-              ${
-                article.countries?.length
-                  ? `<span class="pill">${article.countries
-                      .map((c) => c.iso2 || c.name)
-                      .filter(Boolean)
-                      .join(" · ")}</span>`
-                  : ""
-              }
-            </div>
-            ${article.summary ? `<p style="margin-top:8px;color:var(--text-soft);font-size:0.85rem;">${article.summary}</p>` : ""}
-          `;
-          list.appendChild(li);
+          const headline = el("h3", "headline");
+          const safeUrl = /^https?:\/\//i.test(article.url || "") ? article.url : null;
+          if (safeUrl) {
+            const link = el("a", null, article.title || "Untitled");
+            link.href = safeUrl;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            headline.appendChild(link);
+          } else {
+            headline.textContent = article.title || "Untitled";
+          }
+          li.appendChild(headline);
+
+          const meta = el("div", "meta");
+          meta.appendChild(el("span", null, `🕒 ${formatDate(article.time)}`));
+          meta.appendChild(el("span", null, `🌐 ${article.source || "未知来源"}`));
+          const codes = (article.countries || []).map((c) => c.iso2 || c.name).filter(Boolean);
+          if (codes.length) meta.appendChild(el("span", "pill", codes.join(" · ")));
+          li.appendChild(meta);
+
+          if (article.summary) li.appendChild(el("p", "summary", article.summary));
+          fragment.appendChild(li);
         });
-
-        document.getElementById("panel-title").textContent = isGlobal
-          ? "全球热点 · Past 24 Hours"
-          : `${data.query.toUpperCase()} · 最近 24 小时`;
+        newsList.replaceChildren(fragment);
+        newsList.scrollTop = 0;
       }
 
-      async function fetchJSON(url) {
-        const res = await fetch(url);
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || res.statusText);
+      function renderNotice(message, onRetry) {
+        const li = el("li", "notice", message);
+        if (onRetry) {
+          const button = el("button", null, "重试");
+          button.type = "button";
+          button.addEventListener("click", onRetry);
+          li.appendChild(button);
         }
-        return res.json();
+        newsList.replaceChildren(li);
       }
 
+      function setStatus(text) {
+        panelStatus.textContent = text || "";
+      }
+
+      function describeUpdate(data) {
+        const updated = data.updated_at ? formatDate(data.updated_at) : null;
+        return `${data.count} 条${updated ? ` · 数据更新于 ${updated}` : ""}`;
+      }
+
+      function describeError(error) {
+        if (error instanceof ApiError && error.status === 503) return "新闻源暂时限流，请稍后重试。";
+        if (error instanceof ApiError && error.status === 400) return "暂不支持查询该地区的新闻。";
+        return "新闻加载失败，请检查网络后重试。";
+      }
+
+      // ---- 视图状态 -------------------------------------------------------
+      // view.token 用来丢弃过期响应：快速连续点击多个国家时，只渲染最后一次点击的结果。
+      const view = { mode: "global", token: 0 };
+      let globalData = null;
+      let globalLoadedAt = 0;
+
+      function showGlobalData(data) {
+        globalData = data;
+        renderGlobalOption(data.articles);
+        if (view.mode !== "global") return;
+        panelTitle.textContent = "全球热点 · Past 24 Hours";
+        backGlobalBtn.classList.add("hidden");
+        newsList.classList.remove("loading");
+        if (data.articles.length) renderArticles(data.articles);
+        else renderNotice("过去 24 小时内暂无热点新闻。");
+        setStatus(describeUpdate(data));
+      }
+
+      async function loadGlobalNews({ force = false } = {}) {
+        try {
+          const data = await getJSON(GLOBAL_PATH, { force });
+          globalLoadedAt = Date.now();
+          writeSnapshot(data);
+          showGlobalData(data);
+        } catch (error) {
+          console.error(error);
+          // 已有数据（快照或上一次结果）时保留展示，只提示刷新失败。
+          if (globalData) {
+            if (view.mode === "global") setStatus(`${describeUpdate(globalData)} · 刷新失败`);
+          } else if (view.mode === "global") {
+            setStatus("");
+            renderNotice(describeError(error), () => {
+              renderNotice("加载中…");
+              loadGlobalNews({ force: true });
+            });
+          }
+        }
+      }
+
+      function showGlobalView() {
+        view.mode = "global";
+        view.token += 1;
+        if (globalData) showGlobalData(globalData);
+        else {
+          panelTitle.textContent = "全球热点 · Past 24 Hours";
+          backGlobalBtn.classList.add("hidden");
+          renderNotice("加载中…");
+          loadGlobalNews();
+        }
+      }
+
+      async function showCountry(identifier, displayName) {
+        view.mode = "country";
+        const token = (view.token += 1);
+        panelTitle.textContent = `${displayName} · 最近 24 小时`;
+        backGlobalBtn.classList.remove("hidden");
+        newsList.classList.add("loading");
+        setStatus("加载中…");
+
+        try {
+          const data = await getJSON(`/api/country/${encodeURIComponent(identifier)}?max_records=50`);
+          if (token !== view.token) return;
+          if (data.articles.length) renderArticles(data.articles);
+          else renderNotice("该国家最近 24 小时内暂无新闻。");
+          setStatus(describeUpdate(data));
+        } catch (error) {
+          if (token !== view.token) return;
+          console.error(error);
+          setStatus("");
+          const retryable = !(error instanceof ApiError && error.status === 400);
+          renderNotice(describeError(error), retryable ? () => showCountry(identifier, displayName) : null);
+        } finally {
+          if (token === view.token) newsList.classList.remove("loading");
+        }
+      }
+
+      chart.on("click", (params) => {
+        const name = params.name;
+        if (!name) return;
+        const country = countryByMapName.get(name);
+        showCountry(country?.iso2 || name, name);
+      });
+
+      backGlobalBtn.addEventListener("click", showGlobalView);
+
+      // ---- 响应式布局 -----------------------------------------------------
       function applyResponsiveLayout() {
         const mobile = window.innerWidth <= 768;
 
@@ -1238,27 +740,6 @@
         requestAnimationFrame(() => chart.resize());
       }
 
-      async function loadGlobalNews() {
-        const data = await fetchJSON(`${BACKEND_BASE_URL}/api/global?max_records=50`);
-        renderGlobalOption(data.articles);
-        renderNewsList(data, true);
-        applyResponsiveLayout();
-      }
-
-      chart.on("click", (params) => {
-        const name = params.name;
-        const codeFromData = params?.data?.iso2 ? String(params.data.iso2).toUpperCase() : null;
-        const codeFromLookup = findCountryCode(name);
-        const identifier = codeFromData || (codeFromLookup ? codeFromLookup.toUpperCase() : name);
-        if (!identifier) return;
-        fetchJSON(`${BACKEND_BASE_URL}/api/country/${encodeURIComponent(identifier)}?max_records=50`)
-          .then((data) => renderNewsList(data, false))
-          .catch((error) => {
-            console.error(error);
-            alert("未能获取该国家的新闻，请稍后再试。");
-          });
-      });
-
       if (toggleMapBtn) {
         toggleMapBtn.addEventListener("click", () => {
           if (window.innerWidth > 768) return;
@@ -1288,17 +769,39 @@
         );
       }
 
-      (async function init() {
-        try {
-          await loadWorldJSON();
-          renderGlobalOption([]);
-          applyResponsiveLayout();
-          await loadGlobalNews();
-          window.addEventListener("resize", applyResponsiveLayout);
-        } catch (error) {
-          console.error(error);
-          alert("初始化失败，请检查网络或后端服务。");
-        }
+      // ---- 启动 -----------------------------------------------------------
+      function refreshIfStale() {
+        if (document.visibilityState !== "visible") return;
+        if (Date.now() - globalLoadedAt < REFRESH_INTERVAL_MS) return;
+        loadGlobalNews({ force: true });
+      }
+
+      (function init() {
+        window.addEventListener("resize", applyResponsiveLayout);
+        applyResponsiveLayout();
+
+        // 1) 上次会话的快照立即上屏（客户端 stale-while-revalidate）
+        const snapshot = readSnapshot();
+        if (snapshot) showGlobalData(snapshot);
+        else renderNotice("加载中…");
+
+        // 2) 地图与新闻并行加载，互不阻塞；任何一方失败都不影响另一方
+        const mapLoad = loadWorldJSON()
+          .then(() => {
+            renderGlobalOption(globalData ? globalData.articles : []);
+            applyResponsiveLayout();
+          })
+          .catch((error) => {
+            console.error(error);
+            mapEl.textContent = "地图数据加载失败，新闻列表仍可正常浏览。";
+            mapEl.style.cssText += "display:flex;align-items:center;justify-content:center;color:var(--text-soft);";
+          });
+        const newsLoad = loadGlobalNews();
+        Promise.allSettled([mapLoad, newsLoad]);
+
+        // 3) 页面可见时定期刷新；切回标签页时若数据过期则立即刷新
+        setInterval(refreshIfStale, 60 * 1000);
+        document.addEventListener("visibilitychange", refreshIfStale);
       })();
     </script>
   </body>

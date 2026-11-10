@@ -1,116 +1,118 @@
 World Dashboard｜GDELT 驱动的实时新闻地图
 =========================================
 
-该原型旨在用最小投入把现有世界地图画布升级成“实时新闻态势”仪表盘。核心思路是**零自建爬虫**，直接调用 GDELT DOC 2.0 API 抓取全球媒体新闻，再由 Python 中间层整理成前端可用的数据结构，最终在 ECharts 世界地图上展示热点与各国详情。
+该原型旨在用最小投入把现有世界地图画布升级成“实时新闻态势”仪表盘。核心思路是**零自建爬虫**，直接调用 GDELT DOC 2.0 API 抓取全球媒体新闻，再由 Cloudflare Worker 中间层整理成前端可用的数据结构，最终在 ECharts 世界地图上展示热点与各国详情。
 
 项目结构
 --------
-- `backend/`：FastAPI 中间层，封装 GDELT 查询并输出统一 JSON。
-- `frontend/`：采用 CDN 版 ECharts 的静态页面，实现地图交互与新闻面板；包含 `download_world_geo.py` 用于获取本地 `world.geo.json`。
-- `api/`：Vercel Serverless Functions 入口（`index.py`），复用 FastAPI `app`。
-- `readme`：方案说明与运行指南。
+- `worker/`：Cloudflare Worker 后端，封装 GDELT 查询并输出统一 JSON（`src/` 源码，`test/` 单元测试）。
+- `frontend/`：采用 CDN 版 ECharts 的静态页面，实现地图交互与新闻面板，由同一个 Worker 作为静态资源托管。
+- `wrangler.jsonc`：Cloudflare 部署配置。
 
 功能概览
 --------
-- 地图上以散点高亮过去 24 小时内媒体报道密集的地区。
+- 地图上以散点高亮过去 24 小时内媒体报道密集的国家。
 - 世界地图底色按国家热度实时着色，可直接感知热点分布。
-- 右侧滚动面板展示“全球最热新闻”列表，附上标题、时间、来源、关联国家。
-- 点击任意国家，可拉取该国最近 24 小时的 50 条焦点新闻。
-- 移动端在浏览新闻列表时会自动折叠地图，可通过按钮随时“显示/隐藏地图”。
+- 右侧滚动面板展示“全球最热新闻”列表，附上标题、时间、来源、来源国家。
+- 点击任意国家，可拉取该国最近 24 小时的 50 条焦点新闻，并可一键返回全球视图。
 - 所有数据均提供原文链接，方便跳转阅读。
 
 快速开始
 --------
-**1. 启动后端（FastAPI）**
+需要 Node.js 20+。
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate           # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+npm install
+npm run dev        # http://localhost:8787 ，页面与 /api 同源
+npm test           # 单元测试
 ```
-可选环境变量：
-- `HOST` / `PORT`：服务绑定地址（默认 `0.0.0.0:8000`）。
-- `CORS_ALLOW_ORIGINS`：允许的前端来源，默认 `*`。
-- `GDELT_TIMESPAN`：默认查询时间窗口（默认 `1d`，可用 `12h`、`3d` 等）。
-- `GDELT_TRANSLATION`：是否请求 GDELT 自动翻译，默认 `googtrans`（Google 翻译），留空则关闭。
-- `GDELT_GLOBAL_QUERY`：全局热点的 GDELT 查询模板。
 
-**2. 启动前端（静态 ECharts 页）**
+部署到 Cloudflare
+-----------------
+页面与 API 由同一个 Worker 提供，无需单独配置 CORS 或后端地址。
+
+**方式一：命令行**
 ```bash
-cd frontend
-python download_world_geo.py   # 首次运行：下载 world.geo.json 到本地
-python -m http.server 5173
+npx wrangler login
+npm run deploy
 ```
-访问 `http://localhost:5173/index.html`。若后端运行在其他端口，可在浏览器控制台执行
-`window.BACKEND_BASE_URL = "http://127.0.0.1:8000"` 后刷新页面。
-> 若出现“无法加载世界地图数据”，请确认 `frontend/world.geo.json` 已存在，可使用 `python download_world_geo.py` 或手动下载其他 GeoJSON 后覆盖；也可以在控制台设置 `window.WORLD_MAP_SOURCES = ["http://yourdomain/world.geo.json"]` 指向企业内网资源。
+部署完成后会输出 `https://world-dashboard.<你的子域>.workers.dev`。
+
+**方式二：Git 自动部署（Workers Builds）**  
+Cloudflare Dashboard → Workers & Pages → Create → Import a repository，选择本仓库；构建命令留空，部署命令 `npx wrangler deploy`。之后每次推送都会自动发布。
+
+可在 `wrangler.jsonc` 的 `vars` 中调整：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `CACHE_TTL_SECONDS` | `600` | GDELT 结果的新鲜期 |
+| `CACHE_STALE_SECONDS` | `86400` | 过期数据仍可兜底使用的最长时间 |
+| `GDELT_TIMESPAN` | `1d` | 默认查询时间窗口（如 `12h`、`3d`） |
+| `GDELT_TRANSLATION` | `googtrans` | GDELT 自动翻译，留空关闭 |
+| `GDELT_GLOBAL_QUERY` | 见 `worker/src/index.js` | 全局热点的 GDELT 查询模板 |
+| `CORS_ALLOW_ORIGINS` | `*` | 允许跨域访问 API 的来源，逗号分隔 |
+
+缓存与并发设计
+--------------
+GDELT 免费但限流严格（约每 5 秒一次请求），因此所有请求都经过以下几层：
+
+- **两级缓存**：L1 为 Worker 实例内存（LRU），L2 为 Cloudflare Cache API（同一数据中心内所有实例共享）。
+- **stale-while-revalidate**：数据过期后先立即返回旧数据，再通过 `ctx.waitUntil` 在后台刷新，用户不必等待 GDELT。
+- **stale-if-error + 负缓存**：GDELT 出错或限流时继续返回旧数据，并在短时间内不再重复请求上游。
+- **请求合并（single-flight）**：同一查询的并发请求只触发一次上游调用。
+- **上游保护**：信号量限制并发、单次请求超时、对限流与 5xx 做指数退避加抖动重试。
+- **缓存键归一化**：`max_records` 只在返回时截断，不同取值共享同一份缓存。
+- **HTTP 缓存**：API 响应带 `ETag`，支持 `If-None-Match` → `304`；地图数据通过 `frontend/_headers` 设置长缓存。
+- **前端**：地图与新闻并行加载；`sessionStorage` 快照让刷新后立即出内容；内存缓存加请求合并避免重复点击发请求；快速连点多个国家时只渲染最后一次的结果；标签页可见时每 10 分钟自动刷新。
+
+响应头 `X-Cache` 标明缓存状态：`MISS` / `HIT` / `STALE` / `STALE-ERROR`，以及命中的层级。
 
 后端 API
 --------
-- `GET /api/global`  
-  - 参数：`max_records`（默认 20，最大 200）、`timespan`（默认 `1d`）、`query`（默认 `GDELT_GLOBAL_QUERY`）。  
-  - 返回过去 24 小时内的全球热点新闻，附地理坐标信息供前端渲染散点。
-- `GET /api/country/{country}`  
-  - 参数：`country` 支持国家名、ISO2、ISO3 或 GDELT FIPS 代码；`max_records` 默认 50；`timespan` 默认 `1d`。  
-  - 返回指定国家过去 24 小时的新闻列表。
-- `GET /health`：健康检查。
+- `GET /api/global`
+  - 参数：`max_records`（默认 20，最大 100）、`timespan`（默认 `1d`）、`query`（默认 `GDELT_GLOBAL_QUERY`）。
+  - 返回过去 24 小时内的全球热点新闻。
+- `GET /api/country/{country}`
+  - `country` 支持 ISO 3166-1 两位码（`CN`）、三位码（`CHN`）或英文国家名；`max_records` 默认 50；`timespan` 默认 `1d`。
+  - 返回该国媒体过去 24 小时的新闻列表。
+- `GET /api/health`：健康检查。
 
 示例响应（截断）
 ```json
 {
-  "query": "locationcountry:JP",
-  "count": 3,
+  "query": "sourcecountry:JA AND (theme:ARMEDCONFLICT OR ...)",
+  "country": {"iso2": "JP", "name": "Japan"},
+  "count": 1,
+  "updated_at": "2026-11-10T06:31:24.037Z",
   "articles": [
     {
-      "id": "20240922T120000Z_JP",
+      "id": "https://example.com/story",
       "title": "Japan announces joint naval drills in Indo-Pacific",
-      "url": "https://example.com",
-      "time": "20240922T120000Z",
-      "source": "Reuters",
+      "url": "https://example.com/story",
+      "time": "20261110T060000Z",
+      "source": "example.com",
       "source_country": "JP",
-      "summary": "Tokyo confirmed...",
-      "tone": -1.23,
-      "themes": ["NAVY", "SECURITY"],
-      "countries": [
-        {"name": "Japan", "iso2": "JP", "lat": 35.6895, "lon": 139.6917}
-      ]
+      "language": "English",
+      "image": "https://example.com/cover.jpg",
+      "countries": [{"iso2": "JP", "name": "Japan"}]
     }
   ]
 }
 ```
 
+国家代码
+--------
+GDELT 使用 FIPS 10-4 国家代码，与 ISO 3166 大量冲突：FIPS `CH` 是中国而 ISO `CH` 是瑞士，FIPS `GB` 是加蓬而 ISO `GB` 是英国，FIPS `AU` 是奥地利而 ISO `AU` 是澳大利亚。
+
+本项目对外（API 与前端）**只使用 ISO 两位码**，FIPS 只在 Worker 向 GDELT 发请求前的最后一步生成（`worker/src/countries.js`，对照表在 `worker/src/country-data.js`）。前端的国家代码直接读取自 `world.geo.json`，不再维护手写映射表。
+
 GDELT 查询模板
 --------------
-- 基础请求：`https://api.gdeltproject.org/api/v2/doc/doc?query={keywords}&mode=ArtList&format=JSON&maxrecords=50&timespan=24H&sort=DateDesc`
-- 国家过滤：`locationcountry:{ISO2}` 或 `sourcecountry:{ISO2}`，可叠加主题关键词（`theme:ARMEDCONFLICT` 等）。
+- 基础请求：`https://api.gdeltproject.org/api/v2/doc/doc?query={keywords}&mode=ArtList&format=JSON&maxrecords=100&timespan=1d&sort=DateDesc`
+- 国家过滤：`sourcecountry:{FIPS}`，可叠加主题关键词（`theme:ARMEDCONFLICT` 等）。带主题的查询无结果时自动回退为仅按国家查询。
 - 热点强调：通过调整 `GDELT_GLOBAL_QUERY`（如限制可信媒体域名、指定主题）来控制返回质量。
-- 趋势统计：若需折线趋势，可改用 `mode=TimelineVolRaw` 或 `mode=TimelineTone` 自行聚合。
 
-分类与映射
-----------
-- 国家：优先使用 `articles[].locations` 提供的经纬度和国家代码；若缺失则回退到 `sourcecountry` 并借助 `pycountry` 做归一化。
-- 主题：当前原型直接暴露 GDELT `themes`，后续可映射为 `geopolitics / military / domestic / intl` 等自定义分类。
-
-合规与成本考量
----------------
-- 所有内容来自 GDELT 官方索引与引用，避免版权风险；前端仅展示标题、摘要与外链。
-- GDELT 免费但存在速率限制，建议在后端为常见查询做缓存（例如 10 分钟缓存一次）。
-- 若与既有内容系统集成，可设置域名白名单或对 tone/主题打分以过滤噪声新闻。
-
-后续可选增强
-------------
-- 追加 WebSocket / SSE 推送，实现热点实时刷新。
-- 引入多语言支持，结合 GDELT `translation` 字段或自建翻译服务。
-- 为特定事件（军事冲突、金融波动等）设定告警策略，在地图上高亮预警。
-- 将静态前端迁移到实际框架（React/Vue）并与现有世界地图画布深度结合。
-
-Vercel 部署指引
---------------
-1. **静态前端**：在 Vercel Dashboard 将 `frontend/` 设为项目根目录或静态资源目录，即可直接托管 `index.html` 与 `world.geo.json`。
-2. **Serverless 后端**：`api/index.py` 将 FastAPI `app` 暴露给 Vercel Functions，`vercel.json` 已配置运行时为 Python 3.11，并将 `/api/*` 路由指向该函数。
-3. **依赖**：根目录 `requirements.txt` 列出了 FastAPI、httpx 等依赖，Vercel 部署时会自动安装。
-4. **环境变量**：在 Vercel 项目中配置 `GDELT_GLOBAL_QUERY`、`GDELT_TIMESPAN` 等变量，行为与本地 `.env` 一致。
-5. **调试兼容**：`backend/main.py` 仍保留 `uvicorn` 启动代码，方便本地开发；部署到 Vercel 时只需导入 `app` 即可。
+合规考量
+--------
+- 所有内容来自 GDELT 官方索引与引用；前端仅展示标题与外链。
 
 [1]: https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/

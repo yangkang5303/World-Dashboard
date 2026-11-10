@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "world-dashboard",
+  "main": "worker/src/index.js",
+  "compatibility_date": "2026-01-01",
+  // Static frontend. Only API paths invoke the Worker; everything else is
+  // served straight from Cloudflare's asset cache at no Worker cost.
+  "assets": {
+    "directory": "./frontend",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/health"]
+  },
+  "observability": { "enabled": true },
+  "vars": {
+    // How long a GDELT answer counts as fresh, and how long a stale copy may
+    // still be served while refreshing in the background / during outages.
+    "CACHE_TTL_SECONDS": "600",
+    "CACHE_STALE_SECONDS": "86400",
+    "GDELT_TIMESPAN": "1d",
+    "GDELT_TRANSLATION": "googtrans",
+    "CORS_ALLOW_ORIGINS": "*"
+  }
+}
