@@ -1,0 +1,10 @@
+# 地图数据约 1 MB 且极少变化：浏览器缓存一天，过期后先用旧数据再后台更新
+/world.geo.json
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/favicon.*
+  Cache-Control: public, max-age=604800
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
