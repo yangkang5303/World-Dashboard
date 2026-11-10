@@ -6,8 +6,10 @@ export const DEFAULT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc";
 
 const ATTEMPT_TIMEOUT_MS = 9_000;
 const MAX_ATTEMPTS = 3;
-const BACKOFF_BASE_MS = 1_200;
-const MAX_RETRY_AFTER_MS = 6_000;
+const BACKOFF_BASE_MS = 1_000;
+const MAX_RETRY_AFTER_MS = 8_000;
+// GDELT rejects clients that send more than one request every five seconds.
+export const MIN_INTERVAL_MS = 5_200;
 
 export class GdeltError extends Error {
   /**
@@ -42,20 +44,27 @@ export class Semaphore {
   }
 }
 
-// GDELT asks for roughly one request every five seconds per client, so an
-// isolate never talks to it with more than two requests at once.
-const upstreamSlots = new Semaphore(2);
+// One upstream request at a time per isolate, and never two starts closer
+// together than MIN_INTERVAL_MS — retries included.
+const upstreamSlots = new Semaphore(1);
+let lastRequestAt = -Infinity;
+
+async function waitForTurn(sleep, now) {
+  const wait = lastRequestAt + MIN_INTERVAL_MS - now();
+  if (wait > 0) await sleep(wait);
+  lastRequestAt = now();
+}
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * @param {{ docUrl?: string, translation?: string }} config
  * @param {{ query: string, timespan: string, maxRecords: number, sort?: string }} params
- * @param {{ fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void> }} [deps]
+ * @param {{ fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void>, now?: () => number }} [deps]
  * @returns {Promise<object[]>} raw GDELT article objects
  */
 export async function fetchArticles(config, params, deps = {}) {
-  const { fetchImpl = fetch, sleep = defaultSleep } = deps;
+  const { fetchImpl = fetch, sleep = defaultSleep, now = Date.now } = deps;
   const url = new URL(config.docUrl || DEFAULT_DOC_URL);
   url.searchParams.set("query", params.query);
   url.searchParams.set("mode", "ArtList");
@@ -69,13 +78,14 @@ export async function fetchArticles(config, params, deps = {}) {
     let lastError;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       try {
+        await waitForTurn(sleep, now);
         return await requestOnce(fetchImpl, url);
       } catch (error) {
         lastError = error;
         if (!(error instanceof GdeltError) || !error.retryable || attempt === MAX_ATTEMPTS - 1) break;
+        // Extra delay on top of the mandatory spacing applied by waitForTurn.
         const backoff = BACKOFF_BASE_MS * 2 ** attempt;
-        const wait = Math.max(error.retryAfterMs ?? 0, backoff) + Math.random() * 400;
-        await sleep(wait);
+        await sleep(Math.max(error.retryAfterMs ?? 0, backoff) + Math.random() * 400);
       }
     }
     throw lastError;

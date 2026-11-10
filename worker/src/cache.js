@@ -2,6 +2,8 @@
 //
 //   L1  per-isolate memory (LRU)      — sub-millisecond, lost when the isolate is evicted
 //   L2  Cloudflare Cache API          — shared by every isolate in the same data centre
+//   L3  Workers KV (optional binding) — shared globally; lets a scheduled refresh in
+//                                       one location feed visitors everywhere
 //
 // Read path:
 //   fresh entry            -> HIT, no upstream call
@@ -38,13 +40,13 @@ export class SwrCache {
   /**
    * @template T
    * @param {string} key
-   * @param {{ ttlMs: number, staleMs: number, errorTtlMs?: number }} policy
+   * @param {{ ttlMs: number, staleMs: number, errorTtlMs?: number, kv?: KVNamespace | null }} policy
    * @param {() => Promise<T>} loader
    * @param {{ waitUntil(promise: Promise<unknown>): void }} ctx
-   * @returns {Promise<{ value: T, state: "HIT" | "STALE" | "MISS" | "STALE-ERROR", tier: "memory" | "edge" | "origin", ageMs: number, storedAt: number }>}
+   * @returns {Promise<{ value: T, state: "HIT" | "STALE" | "MISS" | "STALE-ERROR", tier: "memory" | "edge" | "kv" | "origin", ageMs: number, storedAt: number }>}
    */
   async get(key, policy, loader, ctx) {
-    const { ttlMs, staleMs, errorTtlMs = 15_000 } = policy;
+    const { ttlMs, staleMs, errorTtlMs = 15_000, kv = null } = policy;
 
     let entry = this.#memoryGet(key);
     let tier = "memory";
@@ -54,6 +56,15 @@ export class SwrCache {
         entry = edgeEntry;
         tier = "edge";
         this.#memorySet(key, entry);
+      }
+    }
+    if (kv && (!entry || this.now() - entry.storedAt >= ttlMs)) {
+      const kvEntry = await this.#kvGet(kv, key);
+      if (kvEntry && (!entry || kvEntry.storedAt > entry.storedAt)) {
+        entry = kvEntry;
+        tier = "kv";
+        this.#memorySet(key, entry);
+        ctx.waitUntil(this.#edgePut(key, entry, staleMs));
       }
     }
 
@@ -68,7 +79,7 @@ export class SwrCache {
     if (entry && age < staleMs) {
       if (!recentlyFailed) {
         // Refresh behind the response. Errors are swallowed: the stale copy stays.
-        ctx.waitUntil(this.#load(key, staleMs, loader, ctx).catch(() => {}));
+        ctx.waitUntil(this.#load(key, policy, loader, ctx).catch(() => {}));
       }
       return { value: entry.value, state: recentlyFailed ? "STALE-ERROR" : "STALE", tier, ageMs: age, storedAt: entry.storedAt };
     }
@@ -76,12 +87,20 @@ export class SwrCache {
     if (recentlyFailed) throw failure.error;
 
     try {
-      const loaded = await this.#load(key, staleMs, loader, ctx);
+      const loaded = await this.#load(key, policy, loader, ctx);
       return { value: loaded.value, state: "MISS", tier: "origin", ageMs: 0, storedAt: loaded.storedAt };
     } catch (error) {
       if (entry) return { value: entry.value, state: "STALE-ERROR", tier, ageMs: age, storedAt: entry.storedAt };
       throw error;
     }
+  }
+
+  /**
+   * Load now regardless of freshness (used by the scheduled pre-warm).
+   * @returns {Promise<{ value: unknown, storedAt: number }>}
+   */
+  refresh(key, policy, loader, ctx) {
+    return this.#load(key, policy, loader, ctx);
   }
 
   /**
@@ -92,25 +111,26 @@ export class SwrCache {
    * A's context is torn down first. The owner therefore pins its context with
    * waitUntil, and followers only wait a bounded time before loading themselves.
    */
-  #load(key, staleMs, loader, ctx) {
+  #load(key, policy, loader, ctx) {
     const existing = this.inflight.get(key);
     if (existing) {
       return Promise.race([
         existing,
         new Promise((resolve) => setTimeout(resolve, WAITER_PATIENCE_MS, null)),
-      ]).then((result) => result ?? this.#run(key, staleMs, loader, ctx));
+      ]).then((result) => result ?? this.#run(key, policy, loader, ctx));
     }
-    return this.#run(key, staleMs, loader, ctx);
+    return this.#run(key, policy, loader, ctx);
   }
 
-  #run(key, staleMs, loader, ctx) {
+  #run(key, policy, loader, ctx) {
     const promise = (async () => {
       try {
         const value = await loader();
         const entry = { value, storedAt: this.now() };
         this.#memorySet(key, entry);
         this.failures.delete(key);
-        ctx.waitUntil(this.#edgePut(key, entry, staleMs));
+        ctx.waitUntil(this.#edgePut(key, entry, policy.staleMs));
+        if (policy.kv) ctx.waitUntil(this.#kvPut(policy.kv, key, entry, policy.staleMs));
         return entry;
       } catch (error) {
         this.failures.set(key, { error, at: this.now() });
@@ -157,6 +177,23 @@ export class SwrCache {
       return { value: await response.json(), storedAt };
     } catch {
       return null; // The cache is an optimisation; never fail a request over it.
+    }
+  }
+
+  async #kvGet(kv, key) {
+    try {
+      const entry = await kv.get(key, "json");
+      return entry && Number.isFinite(entry.storedAt) && "value" in entry ? entry : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async #kvPut(kv, key, entry, staleMs) {
+    try {
+      await kv.put(key, JSON.stringify(entry), { expirationTtl: Math.max(60, Math.ceil(staleMs / 1000)) });
+    } catch {
+      // ignore
     }
   }
 

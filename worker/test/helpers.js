@@ -24,3 +24,18 @@ export class FakeContext {
     while (this.pending.length) await Promise.all(this.pending.splice(0));
   }
 }
+
+/** In-memory stand-in for a Workers KV namespace. */
+export class FakeKV {
+  constructor() {
+    this.store = new Map();
+  }
+  async get(key, type) {
+    const raw = this.store.get(key);
+    if (raw == null) return null;
+    return type === "json" ? JSON.parse(raw) : raw;
+  }
+  async put(key, value) {
+    this.store.set(key, value);
+  }
+}

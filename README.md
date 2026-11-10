@@ -35,7 +35,7 @@ npm test           # 单元测试
 npx wrangler login
 npm run deploy
 ```
-部署完成后会输出 `https://world-dashboard.<你的子域>.workers.dev`。
+首次部署时 wrangler 会自动创建 KV 命名空间 `NEWS_KV` 并注册定时任务。部署完成后会输出 `https://world-dashboard.<你的子域>.workers.dev`。
 
 **方式二：Git 自动部署（Workers Builds）**  
 Cloudflare Dashboard → Workers & Pages → Create → Import a repository，选择本仓库；构建命令留空，部署命令 `npx wrangler deploy`。之后每次推送都会自动发布。
@@ -44,7 +44,7 @@ Cloudflare Dashboard → Workers & Pages → Create → Import a repository，�
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `CACHE_TTL_SECONDS` | `600` | GDELT 结果的新鲜期 |
+| `CACHE_TTL_SECONDS` | `900` | GDELT 结果的新鲜期 |
 | `CACHE_STALE_SECONDS` | `86400` | 过期数据仍可兜底使用的最长时间 |
 | `GDELT_TIMESPAN` | `1d` | 默认查询时间窗口（如 `12h`、`3d`） |
 | `GDELT_TRANSLATION` | `googtrans` | GDELT 自动翻译，留空关闭 |
@@ -55,11 +55,12 @@ Cloudflare Dashboard → Workers & Pages → Create → Import a repository，�
 --------------
 GDELT 免费但限流严格（约每 5 秒一次请求），因此所有请求都经过以下几层：
 
-- **两级缓存**：L1 为 Worker 实例内存（LRU），L2 为 Cloudflare Cache API（同一数据中心内所有实例共享）。
+- **三级缓存**：L1 为 Worker 实例内存（LRU），L2 为 Cloudflare Cache API（同一数据中心内所有实例共享），L3 为 Workers KV（全球共享）。
+- **定时预热**：Cron 每 10 分钟在后台刷新一次全球热点并写入 KV，访客请求始终命中缓存，不会直接触发 GDELT 请求。
 - **stale-while-revalidate**：数据过期后先立即返回旧数据，再通过 `ctx.waitUntil` 在后台刷新，用户不必等待 GDELT。
 - **stale-if-error + 负缓存**：GDELT 出错或限流时继续返回旧数据，并在短时间内不再重复请求上游。
 - **请求合并（single-flight）**：同一查询的并发请求只触发一次上游调用。
-- **上游保护**：信号量限制并发、单次请求超时、对限流与 5xx 做指数退避加抖动重试。
+- **上游保护**：每个实例同一时刻只发一个上游请求，且两次请求（含重试）至少间隔 5.2 秒；单次请求超时；对限流与 5xx 做指数退避加抖动重试。
 - **缓存键归一化**：`max_records` 只在返回时截断，不同取值共享同一份缓存。
 - **HTTP 缓存**：API 响应带 `ETag`，支持 `If-None-Match` → `304`；地图数据通过 `frontend/_headers` 设置长缓存。
 - **前端**：地图与新闻并行加载；`sessionStorage` 快照让刷新后立即出内容；内存缓存加请求合并避免重复点击发请求；快速连点多个国家时只渲染最后一次的结果；标签页可见时每 10 分钟自动刷新。

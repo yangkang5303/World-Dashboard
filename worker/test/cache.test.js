@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SwrCache } from "../src/cache.js";
-import { FakeContext, FakeEdgeCache } from "./helpers.js";
+import { FakeContext, FakeEdgeCache, FakeKV } from "./helpers.js";
 
 const policy = { ttlMs: 1_000, staleMs: 10_000, errorTtlMs: 500 };
 
@@ -122,4 +122,22 @@ test("entries past the stale window are reloaded", async () => {
   const result = await cache.get("k", policy, loader, ctx);
   assert.equal(result.state, "MISS");
   assert.equal(result.value.version, 2);
+});
+
+test("KV shares entries across locations and feeds the scheduled refresh to everyone", async () => {
+  const clock = { t: 5_000_000 };
+  const kv = new FakeKV();
+  const ctx = new FakeContext();
+  const kvPolicy = { ...policy, kv };
+  // Two data centres: separate memory and separate edge caches, one KV.
+  const here = new SwrCache({ now: () => clock.t, edge: () => new FakeEdgeCache() });
+  const there = new SwrCache({ now: () => clock.t, edge: () => new FakeEdgeCache() });
+
+  await here.refresh("k", kvPolicy, async () => ({ v: 1 }), ctx);
+  await ctx.settle();
+
+  const result = await there.get("k", kvPolicy, async () => assert.fail("loader must not run"), ctx);
+  assert.equal(result.state, "HIT");
+  assert.equal(result.tier, "kv");
+  assert.deepEqual(result.value, { v: 1 });
 });

@@ -95,6 +95,9 @@ async function loadCountry(config, country, timespan, deps) {
   return { query, articles: [] };
 }
 
+const cachePolicy = (config, env) => ({ ttlMs: config.ttlMs, staleMs: config.staleMs, kv: env.NEWS_KV ?? null });
+const globalKey = (timespan, query) => `global|${timespan}|${query}`;
+
 async function handleApi(request, env, ctx, url, deps) {
   const config = readConfig(env);
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -103,7 +106,7 @@ async function handleApi(request, env, ctx, url, deps) {
     return { body: { status: "ok" }, cacheControl: "no-store" };
   }
 
-  const policy = { ttlMs: config.ttlMs, staleMs: config.staleMs };
+  const policy = cachePolicy(config, env);
 
   if (path === "/api/global") {
     const maxRecords = parseMaxRecords(url, 20);
@@ -113,7 +116,7 @@ async function handleApi(request, env, ctx, url, deps) {
       throw new HttpError(400, `query must be between 1 and ${MAX_QUERY_LENGTH} characters`);
     }
     const result = await cache.get(
-      `global|${timespan}|${query}`,
+      globalKey(timespan, query),
       policy,
       () => loadGlobal(config, query, timespan, deps),
       ctx,
@@ -240,6 +243,27 @@ export async function handleRequest(request, env, ctx, deps) {
   }
 }
 
+/**
+ * Cron pre-warm: refresh the default global feed so that visitors are served
+ * from cache and never have to wait on (or get rate limited by) GDELT.
+ */
+export async function handleScheduled(env, ctx, deps) {
+  const config = readConfig(env);
+  const timespan = config.timespan.toLowerCase();
+  try {
+    await cache.refresh(
+      globalKey(timespan, config.globalQuery),
+      cachePolicy(config, env),
+      () => loadGlobal(config, config.globalQuery, timespan, deps),
+      ctx,
+    );
+  } catch (error) {
+    // Visitors keep getting the previous copy; the next run tries again.
+    console.warn("Scheduled refresh failed:", error?.message || error);
+  }
+}
+
 export default {
   fetch: (request, env, ctx) => handleRequest(request, env, ctx),
+  scheduled: (_controller, env, ctx) => handleScheduled(env, ctx),
 };

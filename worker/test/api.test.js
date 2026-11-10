@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleRequest } from "../src/index.js";
-import { FakeContext } from "./helpers.js";
+import { handleRequest, handleScheduled } from "../src/index.js";
+import { MIN_INTERVAL_MS } from "../src/gdelt.js";
+import { FakeContext, FakeKV } from "./helpers.js";
 
 const article = (n, country = "China") => ({
   url: `https://news.example/${n}`,
@@ -138,4 +139,40 @@ test("health and CORS preflight", async () => {
   const preflight = await call("/api/global", {}, { method: "OPTIONS", headers: { origin: "https://x.example" } });
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get("access-control-allow-origin"), "*");
+});
+
+test("upstream requests are spaced at least five seconds apart", async () => {
+  // Virtual clock: sleeping advances time instead of waiting.
+  const clock = { t: 10_000_000 };
+  const starts = [];
+  const deps = {
+    now: () => clock.t,
+    sleep: async (ms) => void (clock.t += ms),
+    fetchImpl: async () => {
+      starts.push(clock.t);
+      return new Response(JSON.stringify({ articles: [article(starts.length)] }));
+    },
+  };
+  await Promise.all(["DE", "IT", "ES"].map((code) => call(`/api/country/${code}?timespan=${span()}`, deps)));
+
+  assert.equal(starts.length, 3);
+  for (let i = 1; i < starts.length; i += 1) {
+    assert.ok(starts[i] - starts[i - 1] >= MIN_INTERVAL_MS, `gap ${starts[i] - starts[i - 1]}ms`);
+  }
+});
+
+test("the scheduled refresh fills the cache so visitors never hit GDELT", async () => {
+  const { queries, deps } = upstream(() => ({ articles: [article(1), article(2)] }));
+  const env = { NEWS_KV: new FakeKV(), GDELT_TIMESPAN: span() };
+  const ctx = new FakeContext();
+
+  await handleScheduled(env, ctx, deps);
+  await ctx.settle();
+  assert.equal(queries.length, 1);
+  assert.equal(env.NEWS_KV.store.size, 1);
+
+  const response = await handleRequest(new Request("https://dash.example/api/global"), env, ctx, deps);
+  assert.match(response.headers.get("x-cache"), /^HIT/);
+  assert.equal((await response.json()).count, 2);
+  assert.equal(queries.length, 1);
 });
